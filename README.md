@@ -2,7 +2,7 @@
 
 Dashboard interactivo de Business Intelligence para el sistema cooperativo de ahorro y crédito ecuatoriano, construido con Streamlit y Python.
 
-**Desarrollado por**: Juan Pablo Erraez T.
+**Desarrollado por**: Eco. Cristian Coronel Quezada, MBA · **DATAMETRICS**
 
 ## Descripcion del Proyecto
 
@@ -190,7 +190,7 @@ Acceder en: http://localhost:8502
 
 La aplicacion esta desplegada en Streamlit Cloud y se actualiza automaticamente con cada push a `main`.
 
-- **Repositorio**: [jp1309/cooperativas](https://github.com/jp1309/cooperativas)
+- **Repositorio**: [cRistiancec/cooperativas](https://github.com/cRistiancec/cooperativas)
 - **Archivo principal**: `Inicio.py`
 - **Rama**: `main`
 
@@ -222,7 +222,8 @@ Cooperativas que cambiaron de segmento a lo largo del tiempo (70+) toman el segm
 
 ## Autor
 
-**Juan Pablo Erraez T.**
+**Eco. Cristian Coronel Quezada, MBA**  
+DATAMETRICS — Business Intelligence and Analytics
 
 Desarrollado con asistencia de Claude AI (Anthropic).
 
