@@ -1,6 +1,6 @@
 {
-  "fecha_procesamiento": "2026-08-24T16:40:41.375681",
-  "registros_totales": 24404894,
+  "fecha_procesamiento": "2026-09-17T21:51:52.370697",
+  "registros_totales": 24639010,
   "cooperativas": 259,
   "segmentos": [
     "SEGMENTO 1",
@@ -9,8 +9,8 @@
     "SEGMENTO 3"
   ],
   "fecha_min": "2018-01-31T00:00:00",
-  "fecha_max": "2026-07-31T00:00:00",
-  "meses": 103,
+  "fecha_max": "2026-08-31T00:00:00",
+  "meses": 104,
   "cuentas": 1563,
   "archivos_procesados": [
     "2026_EEFF-Men.zip"
