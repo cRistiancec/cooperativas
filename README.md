@@ -2,6 +2,8 @@
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cooperativas-q73wpzj6f7.streamlit.app/)
 
+> **Mejora sobre** el proyecto base [jp1309/cooperativas](https://github.com/jp1309/cooperativas) de Juan Pablo Erráez T. — nuevas funcionalidades, optimizaciones de rendimiento y branding DATAMETRICS.
+
 Dashboard interactivo de Business Intelligence para el sistema cooperativo de ahorro y crédito ecuatoriano, construido con Streamlit y Python.
 
 **Desarrollado por**: Eco. Cristian Coronel Quezada, MBA · **DATAMETRICS**
@@ -229,6 +231,8 @@ Cooperativas que cambiaron de segmento a lo largo del tiempo (70+) toman el segm
 DATAMETRICS — Business Intelligence and Analytics
 
 Desarrollado con asistencia de Claude AI (Anthropic).
+
+Mejora y extensión del proyecto base desarrollado por [Juan Pablo Erráez T.](https://github.com/jp1309/cooperativas).
 
 ---
 
