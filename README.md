@@ -1,5 +1,7 @@
 # Radar Cooperativo Ecuador
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cooperativas-q73wpzj6f7.streamlit.app/)
+
 Dashboard interactivo de Business Intelligence para el sistema cooperativo de ahorro y crédito ecuatoriano, construido con Streamlit y Python.
 
 **Desarrollado por**: Eco. Cristian Coronel Quezada, MBA · **DATAMETRICS**
@@ -190,6 +192,7 @@ Acceder en: http://localhost:8502
 
 La aplicacion esta desplegada en Streamlit Cloud y se actualiza automaticamente con cada push a `main`.
 
+- **Aplicación**: [cooperativas-q73wpzj6f7.streamlit.app](https://cooperativas-q73wpzj6f7.streamlit.app/)
 - **Repositorio**: [cRistiancec/cooperativas](https://github.com/cRistiancec/cooperativas)
 - **Archivo principal**: `Inicio.py`
 - **Rama**: `main`
