@@ -543,6 +543,7 @@ def main():
             """
             <div style='text-align: right; color: #718096; font-size: 0.85rem;'>
                 <p><strong>Desarrollado por</strong><br>Eco. Cristian Coronel Quezada, MBA<br><strong>DATAMETRICS</strong></p>
+                <p style='font-size:0.75rem; color:#a0aec0; margin-top:0.25rem;'>Mejora sobre el proyecto base de<br><a href='https://github.com/jp1309/cooperativas' target='_blank' style='color:#a0aec0;'>Juan Pablo Erráez T.</a></p>
             </div>
             """,
             unsafe_allow_html=True
