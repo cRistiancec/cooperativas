@@ -485,7 +485,7 @@ def main():
             </p>
         </div>
         <div style="flex-shrink: 0;">
-            <a href="https://jp1309-bancos.streamlit.app/Balance_General"
+            <a href="https://bancos-dqebh5jqc3r5scsjrlwfxp.streamlit.app/Balance_General"
                target="_blank"
                style="
                    background: white;
@@ -542,7 +542,7 @@ def main():
         st.markdown(
             """
             <div style='text-align: right; color: #718096; font-size: 0.85rem;'>
-                <p><strong>Desarrollado por</strong><br>Juan Pablo Erráez T.</p>
+                <p><strong>Desarrollado por</strong><br>Eco. Cristian Coronel Quezada, MBA<br><strong>DATAMETRICS</strong></p>
             </div>
             """,
             unsafe_allow_html=True
