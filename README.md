@@ -1,14 +1,12 @@
 # DATA METRICS
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cooperativas-q73wpzj6f7.streamlit.app)
+**[▶ Abrir / Activar aplicacion en Streamlit](https://cooperativas-q73wpzj6f7.streamlit.app)**
 ### Business Intelligence and Analytics
 
 ## Radar Cooperativo Ecuador
 
 **Sistema Inteligente para el Monitoreo Integral del Sector Financiero Popular y Solidario**
 
-git pull origin main
-
-**Autor institucional**: Eco. Cristian Coronel Quezada, MBA — CEO - DATAMETRICS
 
 ## Descripcion del Proyecto
 
