@@ -84,11 +84,71 @@ jobs:
         if: steps.descarga.outputs.datos_nuevos == 'true'
         run: python scripts/procesar_camel.py
 
+      # Solvencia oficial (PTC/APPR, fichas SEPS 58-63, fuente FS01 / boletín
+      # "Patrimonio Técnico"). Cobertura parcial por diseño (Segmento 1/
+      # Mutualistas/FINANCOOP) — ver docs/RIESGO_METODOLOGIA.md §3.2. Se marca
+      # `continue-on-error: true` (NO `|| true` dentro del run) a propósito:
+      # un `|| true` hace que el paso salga en verde sin dejar rastro visible
+      # en la UI de Actions; `continue-on-error` deja el paso marcado
+      # explícitamente como fallido-pero-no-bloqueante (ícono de advertencia
+      # en el resumen del run), que es lo que pide el hardening de esta
+      # sesión: "no usar best-effort para ocultar errores críticos" — este
+      # SÍ es opcional por diseño, pero su fallo debe verse, no esconderse.
+      - name: Procesar Solvencia Oficial (FS01)
+        id: solvencia
+        if: steps.descarga.outputs.datos_nuevos == 'true'
+        continue-on-error: true
+        run: python scripts/procesar_solvencia.py
+
+      # Tabla ligera de identidad de entidades (Sección 16): depende de
+      # balance.parquet (segmento_historico) y, si existe, de solvencia.parquet
+      # (RUC). Mismo criterio que el paso anterior.
+      - name: Generar tabla de identidad de entidades
+        id: entidades
+        if: steps.descarga.outputs.datos_nuevos == 'true'
+        continue-on-error: true
+        run: python scripts/generar_entidades.py
+
+      # Validación CRÍTICA: si falla, el job debe terminar en FAILED (sin
+      # continue-on-error) — nunca se publica un resultado "aparentemente
+      # actualizado" si el balance/PyG/CAMEL no pasaron esta validación.
       - name: Validar avance y preservación histórica
         if: steps.descarga.outputs.datos_nuevos == 'true'
         run: >-
           python scripts/validar_actualizacion.py
           --fecha-anterior "${{ steps.descarga.outputs.fecha_anterior }}"
+
+      # Resumen explícito de estado por componente, siempre se ejecuta
+      # (incluso si un paso crítico anterior falló) para que el run nunca
+      # quede sin un registro legible de qué pasó. Distingue exactamente:
+      # ERROR CRÍTICO / WARNING (componente opcional degradado) / NO HAY
+      # DATOS NUEVOS / COMPONENTE NO DISPONIBLE POR FALTA DE FUENTE.
+      - name: Resumen de estado del pipeline
+        if: always()
+        run: |
+          {
+            echo "## Resumen del pipeline — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+            if [ "${{ steps.descarga.outputs.datos_nuevos }}" != "true" ]; then
+              echo "- **NO HAY DATOS NUEVOS**: la SEPS todavía no publicó un mes nuevo. Pipeline terminado sin cambios."
+            else
+              if [ "${{ job.status }}" == "failure" ]; then
+                echo "- **ERROR CRÍTICO**: un paso obligatorio del pipeline (balance/PyG/CAMEL/validación) falló. Ver logs del job — el run queda en FAILED."
+              else
+                echo "- Balance/PyG/CAMEL/agregados/validación: OK."
+              fi
+              if [ "${{ steps.solvencia.outcome }}" == "failure" ]; then
+                echo "- **WARNING**: Solvencia Oficial (FS01) falló o no tenía datos nuevos de Patrimonio Técnico este mes — componente opcional, no bloquea el pipeline. Ver el paso 'Procesar Solvencia Oficial (FS01)' arriba."
+              elif [ "${{ steps.solvencia.outcome }}" == "success" ]; then
+                echo "- Solvencia Oficial (FS01): OK."
+              fi
+              if [ "${{ steps.entidades.outcome }}" == "failure" ]; then
+                echo "- **WARNING**: Generación de tabla de identidad de entidades falló — componente opcional, no bloquea el pipeline."
+              elif [ "${{ steps.entidades.outcome }}" == "success" ]; then
+                echo "- Tabla de identidad de entidades: OK."
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # 7. Verificar tamaño de parquet (alerta si se acerca al límite de 100 MB)
       - name: Verificar tamaño de archivos
@@ -120,6 +180,11 @@ jobs:
             master_data/indicadores.parquet \
             master_data/agg_*.parquet \
             master_data/metadata*.json
+
+          # Solvencia FS01 y tabla de identidad son best-effort (paso previo
+          # puede no haber generado el archivo, p. ej. sin ZIP nuevo de
+          # Patrimonio Técnico) — no deben tumbar el commit si faltan.
+          git add master_data/solvencia.parquet master_data/entidades_cooperativas.parquet 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No hay cambios en los datos. Nada que commitear."

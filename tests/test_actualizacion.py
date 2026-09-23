@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from scripts.procesar_camel import combinar_historico_camel
 from scripts.procesar_pyg import combinar_historico_pyg
 from scripts.descargar_datos_seps import extraer_download_id
 from scripts.seps_zip import inspeccionar_zip_seps
+from scripts.io_atomico import guardar_parquet_atomico
 
 
 class InspeccionZipTests(unittest.TestCase):
@@ -117,6 +119,61 @@ class IncrementalidadTests(unittest.TestCase):
             self.assertEqual(combinado["fecha"].min(), pd.Timestamp("2020-01-31"))
             enero = combinado[combinado["fecha"] == pd.Timestamp("2026-01-31")]
             self.assertEqual(enero["valor"].iloc[0], 0.25)
+
+
+class EscrituraAtomicaTests(unittest.TestCase):
+    """
+    Hardening 14-sep-2026 (P1, integridad de actualización): un dataset
+    productivo nunca debe quedar parcialmente escrito. `guardar_parquet_atomico()`
+    escribe a un temporal y reemplaza con `os.replace()` (atómico) solo si
+    la escritura completa sin errores.
+    """
+
+    def test_escritura_exitosa_reemplaza_el_archivo_y_no_deja_temporales(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            destino = Path(tmp) / "datos.parquet"
+            df = pd.DataFrame({"a": [1, 2, 3]})
+            guardar_parquet_atomico(df, destino, index=False)
+
+            self.assertTrue(destino.exists())
+            leido = pd.read_parquet(destino)
+            pd.testing.assert_frame_equal(leido, df)
+            # Sin archivos temporales huérfanos en el directorio.
+            temporales = list(Path(tmp).glob(".*.tmp_atomico"))
+            self.assertEqual(temporales, [])
+
+    def test_fallo_durante_la_escritura_preserva_el_archivo_productivo_anterior(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            destino = Path(tmp) / "datos.parquet"
+            df_original = pd.DataFrame({"a": [1, 2, 3]})
+            df_original.to_parquet(destino, index=False)
+            contenido_original = destino.read_bytes()
+
+            df_nuevo_invalido = pd.DataFrame({"a": [9, 9, 9]})
+            with self.assertRaises(RuntimeError):
+                with unittest.mock.patch.object(
+                    pd.DataFrame, "to_parquet", side_effect=RuntimeError("fallo simulado durante la escritura")
+                ):
+                    guardar_parquet_atomico(df_nuevo_invalido, destino, index=False)
+
+            # El archivo productivo debe seguir siendo EXACTAMENTE el original — byte a byte.
+            self.assertEqual(destino.read_bytes(), contenido_original)
+            leido = pd.read_parquet(destino)
+            pd.testing.assert_frame_equal(leido, df_original)
+            # El temporal huérfano se limpia, no queda basura en el directorio.
+            temporales = list(Path(tmp).glob(".*.tmp_atomico"))
+            self.assertEqual(temporales, [])
+
+    def test_fallo_sin_archivo_previo_no_deja_nada_a_medio_escribir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            destino = Path(tmp) / "nuevo.parquet"
+            df = pd.DataFrame({"a": [1]})
+            with self.assertRaises(RuntimeError):
+                with unittest.mock.patch.object(
+                    pd.DataFrame, "to_parquet", side_effect=RuntimeError("fallo simulado")
+                ):
+                    guardar_parquet_atomico(df, destino, index=False)
+            self.assertFalse(destino.exists())
 
 
 if __name__ == "__main__":

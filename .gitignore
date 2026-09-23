@@ -1,6 +1,7 @@
 # Datos fuente (ZIP/XLSM) - no subir
 balances_cooperativas/
 indicadores/
+patrimonio_tecnico/
 
 # Archivos intermedios de procesamiento (no necesarios en producción)
 master_data/indicadores_raw.parquet

@@ -15,21 +15,31 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.data_loader import (
     cargar_pyg,
-    cargar_balance,
     obtener_fechas_disponibles,
-    obtener_segmentos_disponibles,
+    obtener_cooperativas_por_segmento,
+    cargar_metadata,
 )
-from utils.charts import obtener_color_cooperativa
+from utils.charts import (
+    altura_por_categorias,
+    layout_leyenda_series,
+    obtener_color_cooperativa,
+    truncar_nombre,
+    truncar_nombres_unicos,
+)
+from config.constants import MESES
+from ui import aplicar_tema, render_filtro_segmento, render_sidebar
 
 # =============================================================================
 # CONFIGURACION
 # =============================================================================
 
 st.set_page_config(
-    page_title="Pérdidas y Ganancias | Radar Cooperativo",
+    page_title="Pérdidas y Ganancias | Radar Cooperativo Ecuador",
     page_icon="💰",
     layout="wide",
 )
+
+aplicar_tema()
 
 # Mapeo de cuentas principales de PYG (usando códigos contables)
 CUENTAS_PYG = {
@@ -43,37 +53,9 @@ CUENTAS_PYG = {
     '45': 'Gastos de Operación',
 }
 
-# Diccionario de meses
-MESES = {
-    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
-    5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
-    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
-}
-
 # =============================================================================
 # FUNCIONES DE DATOS
 # =============================================================================
-
-@st.cache_data
-def obtener_orden_cooperativas_por_activos(segmento: str = "Todos") -> list:
-    """Obtiene lista de cooperativas ordenadas por activos totales (mayor a menor)."""
-    try:
-        df_balance, _ = cargar_balance()
-        fecha_max_bal = df_balance['fecha'].max()
-        # Codigo '1' es activo total
-        df_activos = df_balance[
-            (df_balance['fecha'] == fecha_max_bal) &
-            (df_balance['codigo'] == '1')
-        ][['cooperativa', 'segmento', 'valor']].copy()
-
-        if segmento != "Todos":
-            df_activos = df_activos[df_activos['segmento'] == segmento]
-
-        df_activos = df_activos.sort_values('valor', ascending=False)
-        return df_activos['cooperativa'].tolist()
-    except Exception:
-        return []
-
 
 @st.cache_data
 def construir_jerarquia_pyg(df: pd.DataFrame) -> dict:
@@ -109,6 +91,8 @@ def construir_jerarquia_pyg(df: pd.DataFrame) -> dict:
 # =============================================================================
 
 def main():
+    render_sidebar(cargar_metadata())
+
     st.title("💰 Pérdidas y Ganancias")
     st.markdown("Análisis de resultados del sistema cooperativo ecuatoriano.")
     st.caption("Valores anualizados (suma móvil 12 meses)")
@@ -137,31 +121,22 @@ def main():
     fecha_min = min(fechas)
     fecha_max = max(fechas)
 
-    # Segmentos disponibles
-    segmentos = ["Todos"] + obtener_segmentos_disponibles(df_pyg)
-
     # Sidebar - Filtros globales
     st.sidebar.markdown("### Filtros")
 
-    segmento_global = st.sidebar.selectbox(
-        "Segmento",
-        options=segmentos,
-        index=0,
-        key="segmento_pyg"
-    )
+    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
+    segmento_global = render_filtro_segmento()
 
     # Filtrar por segmento si aplica
     if segmento_global != "Todos":
         df_pyg = df_pyg[df_pyg['segmento'] == segmento_global]
 
-    # Excluir totales de segmento (VT_) de la lista de cooperativas
-    df_pyg_coops = df_pyg[~df_pyg['cooperativa'].str.startswith('VT_')]
-
-    # Lista de cooperativas (sin totales VT_)
-    cooperativas = sorted(df_pyg_coops['cooperativa'].unique().tolist())
+    # cargar_pyg() ya excluye las filas de subtotal VT_TOTAL* (ver su docstring
+    # en utils/data_loader.py) — no hace falta volver a filtrarlas aquí.
+    cooperativas = sorted(df_pyg['cooperativa'].unique().tolist())
 
     # Cooperativas por defecto (top 4 por activos)
-    cooperativas_ordenadas = obtener_orden_cooperativas_por_activos(segmento_global)
+    cooperativas_ordenadas = obtener_cooperativas_por_segmento(segmento_global)
     cooperativas_default = cooperativas_ordenadas[:4] if len(cooperativas_ordenadas) >= 4 else cooperativas[:4]
     cooperativas_default = [c for c in cooperativas_default if c in cooperativas]
 
@@ -303,12 +278,12 @@ def main():
                         y_data = (df_coop['valor_millones'] / base * 100) if base != 0 else df_coop['valor_millones'] * 0
                         y_label = "Índice (Base 100)"
                     elif modo == 'Participación':
-                        # Calcular participación sobre total del sistema (excluir VT_)
+                        # Calcular participación sobre total del sistema
+                        # (cargar_pyg() ya excluye las filas de subtotal VT_TOTAL*)
                         df_total = df_pyg[
                             (df_pyg['codigo'] == codigo_cuenta) &
                             (df_pyg['fecha'] >= fecha_inicio_sel) &
-                            (df_pyg['fecha'] <= fecha_fin_sel) &
-                            (~df_pyg['cooperativa'].str.startswith('VT_'))
+                            (df_pyg['fecha'] <= fecha_fin_sel)
                         ].groupby('fecha')['valor_12m'].sum().reset_index()
                         df_coop = df_coop.merge(df_total, on='fecha', suffixes=('', '_total'))
                         y_data = (df_coop['valor_12m'] / df_coop['valor_12m_total'] * 100)
@@ -321,19 +296,21 @@ def main():
                     fig_evol.add_trace(go.Scatter(
                         x=df_coop['fecha'],
                         y=y_data,
-                        name=cooperativa[:25] + '...' if len(cooperativa) > 25 else cooperativa,
+                        name=truncar_nombre(cooperativa),
                         mode='lines',
                         line=dict(width=2, color=color_coop),
-                        hovertemplate='<b>%{fullData.name}</b><br>Fecha: %{x|%b %Y}<br>Valor: %{y:,.1f}<extra></extra>'
+                        hovertemplate=(
+                            f'<b>{cooperativa}</b><br>Fecha: %{{x|%b %Y}}<br>Valor: %{{y:,.1f}}<extra></extra>'
+                        ),
                     ))
 
-            # Agregar total del sistema si se solicita (excluir VT_)
+            # Agregar total del sistema si se solicita
+            # (cargar_pyg() ya excluye las filas de subtotal VT_TOTAL*)
             if incluir_sistema and modo == 'Absoluto':
                 df_sistema = df_pyg[
                     (df_pyg['codigo'] == codigo_cuenta) &
                     (df_pyg['fecha'] >= fecha_inicio_sel) &
-                    (df_pyg['fecha'] <= fecha_fin_sel) &
-                    (~df_pyg['cooperativa'].str.startswith('VT_'))
+                    (df_pyg['fecha'] <= fecha_fin_sel)
                 ].groupby('fecha')['valor_12m'].sum().reset_index()
                 df_sistema['valor_millones'] = df_sistema['valor_12m'] / 1_000_000
 
@@ -346,14 +323,18 @@ def main():
                     hovertemplate='<b>%{fullData.name}</b><br>Fecha: %{x|%b %Y}<br>Valor: %{y:,.1f}M<extra></extra>'
                 ))
 
+            # Leyenda escalada al número de series: con 10 cooperativas
+            # seleccionadas, la leyenda horizontal de margen fijo envolvía sus
+            # entradas y se superponía con el eje X.
+            n_series_evol = len(fig_evol.data)
+
             fig_evol.update_layout(
                 title=f"Evolución: {nombre_cuenta}",
                 height=450,
                 xaxis_title="Fecha",
                 yaxis_title=y_label,
                 hovermode="x unified",
-                legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
-                margin=dict(l=10, r=10, t=40, b=80)
+                **layout_leyenda_series(n_series_evol),
             )
 
             st.plotly_chart(fig_evol, width='stretch')
@@ -433,11 +414,10 @@ def main():
     else:
         nombre_cuenta_rank = subcuentas_nivel2_r[codigo_rank]['nombre']
 
-    # Obtener datos de ranking (excluir totales VT_)
+    # Obtener datos de ranking (cargar_pyg() ya excluye las filas VT_TOTAL*)
     df_rank = df_pyg[
         (df_pyg['fecha'] == fecha_rank) &
-        (df_pyg['codigo'] == codigo_rank) &
-        (~df_pyg['cooperativa'].str.startswith('VT_'))
+        (df_pyg['codigo'] == codigo_rank)
     ].copy()
 
     if not df_rank.empty:
@@ -449,25 +429,30 @@ def main():
         colores_rank = [obtener_color_cooperativa(coop) for coop in df_rank['cooperativa']]
 
         # Crear gráfico de barras horizontales
+        nombres_rank = [str(c) for c in df_rank['cooperativa']]
+
         fig_rank = go.Figure(go.Bar(
             x=df_rank['valor_millones'],
-            y=df_rank['cooperativa'].apply(lambda x: x[:30] + '...' if len(x) > 30 else x),
+            y=truncar_nombres_unicos(nombres_rank),
             orientation='h',
             marker=dict(
                 color=colores_rank
             ),
             text=df_rank['valor_millones'].apply(lambda x: f"${x:,.0f}M"),
             textposition='outside',
-            hovertemplate='<b>%{y}</b><br>Valor: $%{x:,.0f}M<extra></extra>'
+            cliponaxis=False,
+            customdata=nombres_rank,
+            hovertemplate='<b>%{customdata}</b><br>Valor: $%{x:,.0f}M<extra></extra>'
         ))
 
         fig_rank.update_layout(
             title=f"{nombre_cuenta_rank} - {MESES[mes_rank]} {ano_rank}",
-            height=max(400, len(df_rank) * 25),
+            height=altura_por_categorias(len(df_rank), px_por_categoria=25),
             xaxis_title="Millones USD (12M)",
             yaxis_title="",
+            yaxis=dict(tickfont=dict(size=10), automargin=True),
             showlegend=False,
-            margin=dict(l=10, r=10, t=40, b=40)
+            margin=dict(l=10, r=70, t=40, b=40)
         )
 
         st.plotly_chart(fig_rank, width='stretch')

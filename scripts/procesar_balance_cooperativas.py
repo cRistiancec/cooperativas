@@ -12,6 +12,11 @@ from pathlib import Path
 from datetime import datetime
 import warnings
 
+try:
+    from io_atomico import guardar_parquet_atomico
+except ModuleNotFoundError:
+    from scripts.io_atomico import guardar_parquet_atomico
+
 warnings.filterwarnings('ignore')
 
 # Rutas
@@ -287,6 +292,17 @@ def procesar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Parsear fecha (si no es ya datetime)
     df['fecha'] = pd.to_datetime(df['fecha'], format='mixed')
 
+    # segmento_historico: el segmento tal como lo reportó la propia entidad
+    # en ESTE archivo/mes, antes de cualquier unificación posterior. Se
+    # captura aquí (inmediatamente después de leer el archivo fuente) porque
+    # es el único punto del pipeline donde el valor es genuinamente
+    # point-in-time. `segmento` (más abajo, en generar_balance_parquet) se
+    # sobrescribe con el último segmento conocido de cada cooperativa — eso
+    # es correcto para rankings/filtros "actuales", pero NO debe usarse para
+    # análisis histórico o sistémico por período (ver docs/RIESGO_METODOLOGIA.md §15).
+    df['segmento_historico'] = df['segmento']
+    df['segmento_historico_estimado'] = False
+
     # Normalizar nombres de cooperativas
     df['cooperativa'] = df['cooperativa'].apply(normalizar_nombre)
 
@@ -331,6 +347,18 @@ def generar_balance_parquet():
         print(f"  Datos existentes hasta: {fecha_max_existente.strftime('%Y-%m')}")
         print(f"  Registros existentes: {len(df_historico):,}")
 
+        # Backfill de segmento_historico para parquets generados antes de esta
+        # columna existir: lo único disponible en ese caso es el `segmento`
+        # ya unificado (last-known), así que se marca explícitamente como
+        # estimado (no point-in-time real) en vez de fingir precisión que no
+        # existe. Corridas futuras de este script, sobre archivos fuente que sí
+        # incluyen la columna, no vuelven a pisar este flag.
+        if 'segmento_historico' not in df_historico.columns:
+            print("  [segmento_historico] Columna ausente en el parquet existente — "
+                  "backfill como ESTIMADO (= segmento last-known, no point-in-time real).")
+            df_historico['segmento_historico'] = df_historico['segmento']
+            df_historico['segmento_historico_estimado'] = True
+
     # Buscar todos los ZIPs disponibles
     zips = sorted(BALANCES_DIR.glob("*.zip"))
     print(f"\nArchivos ZIP encontrados: {len(zips)}")
@@ -370,7 +398,7 @@ def generar_balance_parquet():
         print("\nCombinando datos históricos con nuevos...")
         # Pasar categorías a object sin materializar arreglos Unicode gigantes.
         # astype(str) llegó a requerir >6 GB para 24 millones de filas.
-        for col in ['segmento', 'cooperativa', 'codigo', 'cuenta']:
+        for col in ['segmento', 'cooperativa', 'codigo', 'cuenta', 'segmento_historico']:
             if col in df_historico.columns:
                 df_historico[col] = df_historico[col].astype('object')
         df_nuevos = pd.concat(dataframes, ignore_index=True)
@@ -394,6 +422,21 @@ def generar_balance_parquet():
     if coops_cambiaron:
         print(f"  Cooperativas con cambio de segmento: {len(coops_cambiaron)} (unificando al último)")
     df_final['segmento'] = df_final['cooperativa'].map(ultimo_segmento)
+    # Alias explícito: `segmento` (nombre histórico de la columna, usado por
+    # ~100 referencias en pages/analytics/utils) y `segmento_actual` (nombre
+    # claro para código nuevo) son el MISMO valor — el último segmento
+    # conocido de cada cooperativa. Para análisis por período usar
+    # `segmento_historico` en su lugar (ver nota en procesar_dataframe()).
+    df_final['segmento_actual'] = df_final['segmento']
+    if 'segmento_historico' not in df_final.columns:
+        df_final['segmento_historico'] = df_final['segmento'].astype('object')
+    if 'segmento_historico_estimado' not in df_final.columns:
+        df_final['segmento_historico_estimado'] = True
+    df_final['segmento_historico'] = df_final['segmento_historico'].astype('object')
+    df_final['segmento_historico'] = df_final['segmento_historico'].where(
+        df_final['segmento_historico'].notna(), df_final['segmento']
+    )
+    df_final['segmento_historico_estimado'] = df_final['segmento_historico_estimado'].fillna(True)
 
     # Eliminar columnas no usadas por la UI
     df_final = df_final.drop(columns=['ruc', 'nivel'], errors='ignore')
@@ -401,6 +444,9 @@ def generar_balance_parquet():
     # Optimizar tipos de datos
     print("Optimizando tipos de datos...")
     df_final['segmento'] = df_final['segmento'].astype('category')
+    df_final['segmento_actual'] = df_final['segmento_actual'].astype('category')
+    df_final['segmento_historico'] = df_final['segmento_historico'].astype('category')
+    df_final['segmento_historico_estimado'] = df_final['segmento_historico_estimado'].astype('bool')
     df_final['cooperativa'] = df_final['cooperativa'].astype('category')
     df_final['codigo'] = df_final['codigo'].astype('category')
     df_final['cuenta'] = df_final['cuenta'].astype('category')
@@ -419,9 +465,11 @@ def generar_balance_parquet():
     print(f"Fechas: {df_final['fecha'].min().strftime('%Y-%m')} a {df_final['fecha'].max().strftime('%Y-%m')}")
     print(f"Meses únicos: {df_final['fecha'].nunique()}")
     print(f"Cuentas únicas: {df_final['codigo'].nunique()}")
+    pct_estimado = df_final['segmento_historico_estimado'].mean() * 100
+    print(f"segmento_historico estimado (no point-in-time real): {pct_estimado:.1f}% de registros")
 
     # Guardar parquet
-    df_final.to_parquet(output_path, engine='pyarrow', compression='snappy')
+    guardar_parquet_atomico(df_final, output_path, engine='pyarrow', compression='snappy')
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     print(f"\nArchivo generado: {output_path}")

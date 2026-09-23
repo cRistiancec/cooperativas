@@ -12,9 +12,22 @@ pyarrow==23.0.0
 
 # Visualization
 plotly>=5.14.0,<7.0.0
-kaleido
+# NOTA: 'kaleido' se removió en la auditoría de producción (2026-07) — no hay
+# ningún fig.write_image()/to_image() en el código (los gráficos se exportan
+# a PNG desde el navegador, vía el ícono de cámara de Plotly.js, que no
+# depende de kaleido). Kaleido es además una causa documentada de
+# segmentation faults en Streamlit Cloud (ver commit "Fijar versiones de
+# dependencias para evitar Segmentation fault en Streamlit Cloud"); mantenerla
+# sin uso solo aumenta el riesgo y el tiempo de instalación.
 
 # Descarga automática de datos SEPS (usado por scripts/descargar_datos_seps.py)
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 openpyxl==3.1.5
+
+# Machine Learning (Stress Testing, Modelos Predictivos, clustering, detección de anomalías)
+scikit-learn==1.9.0
+statsmodels==0.14.6
+
+# Asistente Inteligente (integración opcional con Claude/Anthropic)
+anthropic==0.117.1

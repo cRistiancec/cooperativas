@@ -12,26 +12,34 @@ import sys
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from utils.data_loader import (cargar_balance, obtener_fechas_disponibles, obtener_segmentos_disponibles,
-                               obtener_top_cooperativas, obtener_ranking_rapido)
+from utils.data_loader import (
+    cargar_catalogo_cuentas_balance,
+    cargar_balance_por_codigos,
+    obtener_ranking_rapido,
+    cargar_metadata,
+)
+from analytics.financial_engine import calcular_crecimiento_yoy_mensual
+from utils.charts import (
+    altura_por_categorias,
+    layout_leyenda_series,
+    truncar_nombre,
+    truncar_nombres_unicos,
+)
 from config.indicator_mapping import obtener_color_cooperativa
+from config.constants import MESES
+from ui import aplicar_tema, render_filtro_segmento, render_sidebar
 
 # =============================================================================
 # CONFIGURACION
 # =============================================================================
 
 st.set_page_config(
-    page_title="Balance General | Radar Cooperativo",
-    page_icon="📊",
+    page_title="Balance General | Radar Cooperativo Ecuador",
+    page_icon="⚖️",
     layout="wide",
 )
 
-# Nombres de meses en español
-MESES = {
-    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
-    5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
-    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
-}
+aplicar_tema()
 
 # =============================================================================
 # FUNCIONES CACHEADAS DE GRAFICOS
@@ -63,14 +71,18 @@ def _crear_evolucion_cached(series_data, titulo, y_title, incluir_sistema_data=N
             line=dict(width=3, color='black', dash='dash'),
         ))
 
+    # Leyenda escalada al número de series comparadas: con 10 cooperativas y
+    # una leyenda horizontal de margen fijo, las entradas se envolvían en
+    # varias filas y se superponían con el título del eje X.
+    n_series = len([n for n in series_data if n != "__SISTEMA__"]) + (1 if incluir_sistema_data is not None else 0)
+
     fig.update_layout(
         title=titulo,
         height=450,
         xaxis_title="Fecha",
         yaxis_title=y_title,
         hovermode="x unified",
-        legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
-        margin=dict(l=10, r=10, t=40, b=80)
+        **layout_leyenda_series(n_series),
     )
 
     return fig
@@ -106,7 +118,8 @@ def _crear_heatmap_cached(z_values, x_labels, y_labels, titulo, altura):
         height=altura,
         xaxis_title="Período",
         yaxis_title="",
-        xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
+        xaxis=dict(tickangle=-45, tickfont=dict(size=9), automargin=True),
+        yaxis=dict(tickfont=dict(size=10), automargin=True),
         margin=dict(l=10, r=10, t=40, b=80)
     )
 
@@ -116,15 +129,22 @@ def _crear_heatmap_cached(z_values, x_labels, y_labels, titulo, altura):
 @st.cache_data(ttl=3600)
 def _crear_ranking_cached(cooperativas, valores, colores, titulo, altura):
     """Cachea la creación del gráfico de ranking."""
+    # Etiquetas truncadas de forma consistente con el resto de la plataforma
+    # (`truncar_nombres_unicos` garantiza que dos cooperativas no colapsen en
+    # la misma categoría) y nombre completo preservado en el tooltip.
+    etiquetas = truncar_nombres_unicos([str(c) for c in cooperativas])
+
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        y=cooperativas,
+        y=etiquetas,
         x=valores,
         orientation='h',
         marker=dict(color=colores),
         text=[f"${v:,.0f}M" for v in valores],
         textposition='outside',
-        hovertemplate='Cooperativa: %{y}<br>Valor: $%{x:,.0f}M<extra></extra>'
+        cliponaxis=False,
+        customdata=[str(c) for c in cooperativas],
+        hovertemplate='Cooperativa: %{customdata}<br>Valor: $%{x:,.0f}M<extra></extra>'
     ))
 
     fig.update_layout(
@@ -133,8 +153,8 @@ def _crear_ranking_cached(cooperativas, valores, colores, titulo, altura):
         xaxis_title="Valor (Millones USD)",
         yaxis_title="",
         showlegend=False,
-        margin=dict(l=10, r=10, t=40, b=10),
-        yaxis=dict(autorange="reversed")
+        margin=dict(l=10, r=70, t=40, b=10),
+        yaxis=dict(autorange="reversed", tickfont=dict(size=10), automargin=True)
     )
 
     return fig
@@ -167,7 +187,7 @@ def _obtener_series_batch(df_evol_hash, cooperativas, codigo, modo_viz, serie_si
             y_values = valor_millones.tolist()
 
         color_coop = obtener_color_cooperativa(cooperativa)
-        nombre_corto = cooperativa[:30] + "..." if len(cooperativa) > 30 else cooperativa
+        nombre_corto = truncar_nombre(cooperativa)
 
         series_data[cooperativa] = {
             'fechas': fechas,
@@ -240,8 +260,17 @@ def obtener_serie_cooperativa(df: pd.DataFrame, cooperativa: str, codigo: str) -
 
 
 @st.cache_data
-def obtener_serie_sistema(df: pd.DataFrame, codigo: str, segmento: str = "Todos") -> pd.DataFrame:
-    """Obtiene serie temporal agregada del sistema."""
+def _serie_sistema_balance(df: pd.DataFrame, codigo: str, segmento: str = "Todos") -> pd.DataFrame:
+    """
+    Serie temporal agregada del sistema calculada sobre el DataFrame de balance
+    ya cargado en la página.
+
+    No se sustituye por `utils.data_loader.obtener_serie_sistema` (que lee los
+    agregados) porque esta página permite seleccionar cuentas de nivel 3 y 4
+    (1563 cuentas contables) y los agregados solo contienen 9 códigos de nivel
+    1-2. Se renombró con prefijo `_` para dejar explícito que es la variante
+    local sobre el balance completo, y no una duplicación de la otra.
+    """
     df_filtrado = df[df['codigo'] == codigo].copy()
     if segmento != "Todos":
         df_filtrado = df_filtrado[df_filtrado['segmento'] == segmento]
@@ -256,26 +285,17 @@ def obtener_datos_heatmap_mensual(df_completo: pd.DataFrame, codigo: str, cooper
                                    fecha_inicio: pd.Timestamp = None, fecha_fin: pd.Timestamp = None,
                                    segmento: str = "Todos") -> pd.DataFrame:
     """Prepara datos para heatmap de crecimiento YoY mensual por cooperativa."""
-    df_filtrado = df_completo[df_completo['codigo'] == codigo].copy()
-
-    if segmento != "Todos":
-        df_filtrado = df_filtrado[df_filtrado['segmento'] == segmento]
-
-    if cooperativas:
-        df_filtrado = df_filtrado[df_filtrado['cooperativa'].isin(cooperativas)]
+    # El cálculo de crecimiento YoY mes a mes está centralizado en
+    # analytics/crecimiento.py::calcular_crecimiento_yoy_mensual() desde el
+    # 14-sep-2026 (hardening) — antes se reimplementaba aquí. Misma fórmula,
+    # mismo resultado (verificado por CrecimientoYoYMensualTests).
+    df_filtrado = calcular_crecimiento_yoy_mensual(df_completo, codigo, segmento=segmento, cooperativas=cooperativas)
 
     if df_filtrado.empty:
         return pd.DataFrame()
 
-    df_filtrado['año'] = df_filtrado['fecha'].dt.year
-    df_filtrado['mes'] = df_filtrado['fecha'].dt.month
     df_filtrado['valor_millones'] = df_filtrado['valor'] / 1_000_000
     df_filtrado['fecha_str'] = df_filtrado['fecha'].dt.strftime('%Y-%m')
-
-    # Calcular crecimiento YoY
-    df_filtrado = df_filtrado.sort_values(['cooperativa', 'año', 'mes'])
-    df_filtrado['valor_ano_anterior'] = df_filtrado.groupby(['cooperativa', 'mes'], observed=True)['valor_millones'].shift(1)
-    df_filtrado['crecimiento_yoy'] = ((df_filtrado['valor_millones'] / df_filtrado['valor_ano_anterior']) - 1) * 100
 
     # Filtrar por rango de fechas
     if fecha_inicio is not None:
@@ -345,6 +365,8 @@ def obtener_valores_cooperativas_mes(df: pd.DataFrame, codigo: str, fecha: pd.Ti
 # =============================================================================
 
 def main():
+    render_sidebar(cargar_metadata())
+
     st.title("📊 Balance General")
     st.markdown("Análisis temporal del sistema cooperativo ecuatoriano.")
 
@@ -362,25 +384,26 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
-    # Cargar datos
+    # Catálogo liviano de cuentas (codigo/cuenta) para poblar los selectores.
+    # El balance completo (24M filas, ~1 GB en memoria) NO se carga aquí: se
+    # excedía el límite de ~1 GB RAM de Streamlit Cloud y hacía caer la app
+    # al abrir esta página. Cada sección más abajo carga solo la cuenta que
+    # el usuario selecciona, vía `cargar_balance_por_codigos` (pushdown).
     try:
-        df_balance, calidad = cargar_balance()
+        catalogo_cuentas = cargar_catalogo_cuentas_balance()
+        metadata = cargar_metadata()
     except Exception as e:
         st.error(f"Error al cargar datos: {e}")
         st.info("Ejecuta primero el script de procesamiento: `python scripts/procesar_balance_cooperativas.py`")
         return
 
     # Lista de cooperativas y fechas — usar funciones rápidas pre-agregadas
-    from utils.data_loader import (obtener_fechas_disponibles_rapido,
-                                   obtener_segmentos_disponibles_rapido,
-                                   obtener_cooperativas_por_segmento)
+    from utils.data_loader import obtener_cooperativas_por_segmento
     cooperativas = obtener_cooperativas_por_segmento("Todos")
-    fechas = obtener_fechas_disponibles_rapido()
-    segmentos = ["Todos"] + obtener_segmentos_disponibles_rapido()
 
     # Rango de fechas disponibles
-    fecha_min = calidad['fecha_min']
-    fecha_max = calidad['fecha_max']
+    fecha_min = pd.Timestamp(metadata['fecha_min'])
+    fecha_max = pd.Timestamp(metadata['fecha_max'])
 
     # ==========================================================================
     # SIDEBAR
@@ -388,13 +411,8 @@ def main():
 
     st.sidebar.markdown("### Filtros Globales")
 
-    # Selector de segmento
-    segmento_global = st.sidebar.selectbox(
-        "Segmento",
-        options=segmentos,
-        index=0,
-        key="segmento_global"
-    )
+    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
+    segmento_global = render_filtro_segmento()
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Información")
@@ -417,7 +435,7 @@ def main():
     st.caption("Compara la evolución temporal de múltiples cooperativas")
 
     # Obtener jerarquía de cuentas
-    jerarquia = obtener_jerarquia_cuentas(df_balance)
+    jerarquia = obtener_jerarquia_cuentas(catalogo_cuentas)
 
     # Filtros de cuenta
     st.markdown("**Seleccionar Cuenta:**")
@@ -574,18 +592,20 @@ def main():
     else:
         fecha_fin_evol = pd.Timestamp(f"{ano_fin_evol}-{mes_fin + 1:02d}-01") - pd.Timedelta(days=1)
 
-    # Filtrar datos
-    df_evol = df_balance[
-        (df_balance['fecha'] >= fecha_inicio_evol) &
-        (df_balance['fecha'] <= fecha_fin_evol)
+    # Filtrar datos — acotado a la cuenta seleccionada (pushdown), no al
+    # balance completo
+    df_evol = cargar_balance_por_codigos((codigo_cuenta_final,))
+    df_evol = df_evol[
+        (df_evol['fecha'] >= fecha_inicio_evol) &
+        (df_evol['fecha'] <= fecha_fin_evol)
     ]
 
     if segmento_global != "Todos":
         df_evol = df_evol[df_evol['segmento'] == segmento_global]
 
     # Obtener nombre de la cuenta
-    cuenta_info = df_balance[df_balance['codigo'] == codigo_cuenta_final]['cuenta'].iloc[0] if \
-        not df_balance[df_balance['codigo'] == codigo_cuenta_final].empty else codigo_cuenta_final
+    cuenta_info = catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_cuenta_final]['cuenta'].iloc[0] if \
+        not catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_cuenta_final].empty else codigo_cuenta_final
 
     # Dibujar gráfico
     with col_chart:
@@ -595,7 +615,7 @@ def main():
             # Serie del sistema (si necesario)
             serie_sistema_data = None
             if modo_viz == "Participación %" or incluir_sistema:
-                serie_sistema = obtener_serie_sistema(df_evol, codigo_cuenta_final, segmento_global)
+                serie_sistema = _serie_sistema_balance(df_evol, codigo_cuenta_final, segmento_global)
                 if not serie_sistema.empty:
                     serie_sistema_data = serie_sistema
 
@@ -720,8 +740,11 @@ def main():
             st.selectbox("Detalle", options=["N/A"], disabled=True, key="cuenta_nivel4_heat_disabled2")
 
     # Obtener nombre de la cuenta para el heatmap
-    cuenta_info_heat = df_balance[df_balance['codigo'] == codigo_cuenta_heat]['cuenta'].iloc[0] if \
-        not df_balance[df_balance['codigo'] == codigo_cuenta_heat].empty else codigo_cuenta_heat
+    cuenta_info_heat = catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_cuenta_heat]['cuenta'].iloc[0] if \
+        not catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_cuenta_heat].empty else codigo_cuenta_heat
+
+    # Datos de balance acotados a la cuenta seleccionada (pushdown)
+    df_heat = cargar_balance_por_codigos((codigo_cuenta_heat,))
 
     # Selector de top cooperativas
     top_n_heat = st.selectbox(
@@ -744,6 +767,19 @@ def main():
             segmento=segmento_global if segmento_global != "Todos" else "Todos"
         )
         top_cooperativas_heat = df_rank_heat['cooperativa'].tolist() if not df_rank_heat.empty else []
+
+        # `agg_ranking_cooperativas` solo contiene 9 códigos de nivel 1-2. Para
+        # cualquier cuenta de nivel 3 o 4 el ranking rápido venía vacío, la
+        # lista de top quedaba en [] y el heatmap dejaba de filtrar: mostraba
+        # las ~200 instituciones en vez del "Top 20" que indica el selector.
+        # Se resuelve con la misma función que ya usa la sección de ranking de
+        # esta página, sobre el balance ya cargado en memoria.
+        if not top_cooperativas_heat:
+            df_top_fallback = obtener_valores_cooperativas_mes(
+                df_heat, codigo_cuenta_heat, pd.Timestamp(fecha_max), segmento_global
+            )
+            if not df_top_fallback.empty:
+                top_cooperativas_heat = df_top_fallback.head(top_n_heat)['cooperativa'].tolist()
 
     # Filtros de tiempo
     col_heat_chart, col_heat_tiempo = st.columns([4, 1])
@@ -769,7 +805,7 @@ def main():
 
     # Generar datos del heatmap
     heatmap_data = obtener_datos_heatmap_mensual(
-        df_balance,
+        df_heat,
         codigo_cuenta_heat,
         top_cooperativas_heat,
         fecha_inicio_heat,
@@ -785,9 +821,9 @@ def main():
             fig_heat = _crear_heatmap_cached(
                 heatmap_data.values.tolist(),
                 etiquetas_x,
-                heatmap_data.index.tolist(),
+                truncar_nombres_unicos([str(n) for n in heatmap_data.index]),
                 f"Variación YoY: {titulo_cuenta_heat}",
-                max(400, len(heatmap_data) * 22)
+                altura_por_categorias(len(heatmap_data))
             )
             st.plotly_chart(fig_heat, width='stretch')
         else:
@@ -888,8 +924,11 @@ def main():
             st.selectbox("Detalle", options=["N/A"], disabled=True, key="cuenta_nivel4_rank_disabled2")
 
     # Obtener nombre de la cuenta para el ranking
-    cuenta_info_rank = df_balance[df_balance['codigo'] == codigo_rank]['cuenta'].iloc[0] if \
-        not df_balance[df_balance['codigo'] == codigo_rank].empty else codigo_rank
+    cuenta_info_rank = catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_rank]['cuenta'].iloc[0] if \
+        not catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_rank].empty else codigo_rank
+
+    # Datos de balance acotados a la cuenta seleccionada (pushdown)
+    df_rank = cargar_balance_por_codigos((codigo_rank,))
 
     # Filtros de fecha y top N
     col_r_mes, col_r_ano, col_r_top = st.columns(3)
@@ -924,7 +963,7 @@ def main():
     fecha_r = pd.Timestamp(year=ano_r, month=mes_r, day=1)
 
     # Obtener datos de ranking
-    datos_ranking = obtener_valores_cooperativas_mes(df_balance, codigo_rank, fecha_r, segmento_global)
+    datos_ranking = obtener_valores_cooperativas_mes(df_rank, codigo_rank, fecha_r, segmento_global)
 
     if not datos_ranking.empty:
         if top_n_rank > 0:
@@ -933,7 +972,7 @@ def main():
         # Crear gráfico de barras (cacheado)
         colores = [obtener_color_cooperativa(coop) for coop in datos_ranking['cooperativa']]
         titulo_cuenta_rank = cuenta_info_rank if len(str(cuenta_info_rank)) < 50 else str(cuenta_info_rank)[:47] + "..."
-        altura = max(400, len(datos_ranking) * 22)
+        altura = altura_por_categorias(len(datos_ranking))
 
         fig_ranking = _crear_ranking_cached(
             datos_ranking['cooperativa'].tolist(),

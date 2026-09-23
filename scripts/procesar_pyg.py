@@ -15,6 +15,11 @@ import numpy as np
 from pathlib import Path
 import warnings
 
+try:
+    from io_atomico import guardar_parquet_atomico
+except ModuleNotFoundError:
+    from scripts.io_atomico import guardar_parquet_atomico
+
 warnings.filterwarnings('ignore')
 
 # Rutas
@@ -94,19 +99,32 @@ def combinar_historico_pyg(
     if not output_path.exists():
         return df_fuente.copy()
 
-    df_historico = pd.read_parquet(output_path)
+    df_historico_completo = pd.read_parquet(output_path)
     columnas = [
         'fecha', 'segmento', 'cooperativa', 'codigo', 'cuenta',
         'valor_acumulado',
     ]
-    faltantes = [col for col in columnas if col not in df_historico.columns]
+    faltantes = [col for col in columnas if col not in df_historico_completo.columns]
     if faltantes:
         raise ValueError(
             "pyg.parquet histórico no tiene las columnas requeridas: "
             + ", ".join(faltantes)
         )
 
-    df_historico = df_historico[columnas].rename(
+    # segmento_historico: igual patrón usado en procesar_balance_cooperativas.py
+    # y procesar_camel.py (ver docs/RIESGO_METODOLOGIA.md §18). Si el parquet
+    # existente todavía no tiene la columna, se backfillea como ESTIMADO
+    # (= segmento last-known, no point-in-time real) en vez de fingir una
+    # precisión que no existe. Corridas futuras, sobre un pyg.parquet que ya
+    # incluye la columna, preservan el valor real que ya tenían.
+    if 'segmento_historico' not in df_historico_completo.columns:
+        print("  [segmento_historico] Columna ausente en el parquet existente — "
+              "backfill como ESTIMADO (= segmento last-known, no point-in-time real).")
+        df_historico_completo['segmento_historico'] = df_historico_completo['segmento']
+        df_historico_completo['segmento_historico_estimado'] = True
+    columnas = columnas + ['segmento_historico', 'segmento_historico_estimado']
+
+    df_historico = df_historico_completo[columnas].rename(
         columns={'valor_acumulado': 'valor'}
     )
     df_historico['ruc'] = pd.NA
@@ -114,12 +132,20 @@ def combinar_historico_pyg(
 
     df_fuente = df_fuente.copy()
     df_fuente['fecha'] = pd.to_datetime(df_fuente['fecha'])
+    # Defensivo: si quien llama a esta función no adjuntó segmento_historico
+    # (p. ej. una prueba unitaria que ejercita el merge en aislamiento, o un
+    # futuro caller que no siga el flujo de procesar_pyg()), se backfillea
+    # igual que se hace arriba para el histórico — nunca se asume que el
+    # llamador cumplió el contrato sin verificarlo.
+    if 'segmento_historico' not in df_fuente.columns:
+        df_fuente['segmento_historico'] = df_fuente['segmento']
+        df_fuente['segmento_historico_estimado'] = True
     fechas_reemplazo = df_fuente['fecha'].dropna().unique()
     df_historico = df_historico[
         ~df_historico['fecha'].isin(fechas_reemplazo)
     ]
 
-    for col in ['segmento', 'cooperativa', 'codigo', 'cuenta']:
+    for col in ['segmento', 'cooperativa', 'codigo', 'cuenta', 'segmento_historico']:
         df_historico[col] = df_historico[col].astype('object')
         df_fuente[col] = df_fuente[col].astype('object')
 
@@ -211,8 +237,17 @@ def procesar_pyg():
     print(f"  Cooperativas después: {coops_despues}")
     print(f"  Duplicados unificados: {coops_antes - coops_despues}")
 
+    # segmento_historico: el segmento tal como lo reportó la propia entidad en
+    # ESTE mes (el archivo fuente que se está procesando ahora mismo), antes
+    # de la unificación retroactiva de abajo. Mismo patrón que
+    # procesar_balance_cooperativas.py / procesar_camel.py — ver
+    # docs/RIESGO_METODOLOGIA.md §18.
+    df['segmento_historico'] = df['segmento']
+    df['segmento_historico_estimado'] = False
+
     # Seleccionar columnas necesarias antes de agrupar
-    df = df[['fecha', 'segmento', 'ruc', 'cooperativa', 'codigo', 'cuenta', 'valor']].copy()
+    df = df[['fecha', 'segmento', 'ruc', 'cooperativa', 'codigo', 'cuenta', 'valor',
+              'segmento_historico', 'segmento_historico_estimado']].copy()
 
     output_path = MASTER_DATA_DIR / "pyg.parquet"
     df = combinar_historico_pyg(df, output_path)
@@ -222,11 +257,16 @@ def procesar_pyg():
     print("\nAgregando valores de cooperativas con nombres unificados...")
     df = df.groupby(['fecha', 'segmento', 'cooperativa', 'codigo', 'cuenta'], observed=True).agg({
         'valor': 'sum',
-        'ruc': 'first'
+        'ruc': 'first',
+        'segmento_historico': 'first',
+        'segmento_historico_estimado': 'first',
     }).reset_index()
     print(f"Registros después de agregar: {len(df):,}")
 
-    # Unificar segmento: cada cooperativa toma el segmento de su último dato
+    # segmento_actual: alias explícito del comportamiento legado de abajo
+    # (segmento unificado retroactivamente al último conocido). La columna
+    # `segmento` NO cambia de significado — se mantiene por compatibilidad
+    # con el resto del código que ya la lee.
     print("\nUnificando segmentos...")
     ultimo_segmento = (
         df.sort_values('fecha')
@@ -238,6 +278,10 @@ def procesar_pyg():
     if coops_cambiaron:
         print(f"  Cooperativas con cambio de segmento: {len(coops_cambiaron)} (unificando al último)")
     df['segmento'] = df['cooperativa'].map(ultimo_segmento)
+    df['segmento_actual'] = df['segmento']
+
+    pct_estimado = df['segmento_historico_estimado'].mean() * 100
+    print(f"segmento_historico estimado (no point-in-time real): {pct_estimado:.1f}% de registros")
 
     # Estadísticas iniciales
     print(f"\nCooperativas: {df['cooperativa'].nunique()}")
@@ -256,14 +300,16 @@ def procesar_pyg():
 
     # Seleccionar columnas finales (excluir ruc, no usado por la UI)
     columnas_finales = [
-        'fecha', 'segmento', 'cooperativa', 'codigo', 'cuenta',
+        'fecha', 'segmento', 'segmento_actual', 'segmento_historico', 'segmento_historico_estimado',
+        'cooperativa', 'codigo', 'cuenta',
         'valor_acumulado', 'valor_mes', 'valor_12m'
     ]
     df_final = df_final[columnas_finales]
 
     # Optimizar tipos de datos para reducir memoria
-    for col in ['segmento', 'cooperativa', 'codigo', 'cuenta']:
+    for col in ['segmento', 'segmento_actual', 'segmento_historico', 'cooperativa', 'codigo', 'cuenta']:
         df_final[col] = df_final[col].astype('category')
+    df_final['segmento_historico_estimado'] = df_final['segmento_historico_estimado'].astype('bool')
 
     # Estadísticas finales
     print("\n" + "=" * 40)
@@ -289,7 +335,7 @@ def procesar_pyg():
     print(muestra.to_string())
 
     # Guardar
-    df_final.to_parquet(output_path, index=False)
+    guardar_parquet_atomico(df_final, output_path, index=False)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     print(f"\n[OK] Guardado: {output_path}")

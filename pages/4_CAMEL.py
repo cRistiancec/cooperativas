@@ -7,7 +7,6 @@ Carga indicadores pre-calculados extraídos de las tablas dinámicas de la Super
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
@@ -18,6 +17,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from utils.data_loader import (
     cargar_indicadores,
     obtener_cooperativas_por_segmento,
+    cargar_metadata,
 )
 from config.indicator_mapping import (
     GRUPOS_INDICADORES,
@@ -25,24 +25,26 @@ from config.indicator_mapping import (
     ESCALAS_COLORES_HEATMAP,
     RANGOS_HEATMAP,
 )
-from utils.charts import obtener_color_cooperativa
+from utils.charts import (
+    altura_por_categorias,
+    layout_leyenda_series,
+    obtener_color_cooperativa,
+    truncar_nombre,
+    truncar_nombres_unicos,
+)
+from ui import aplicar_tema, render_filtro_segmento, render_sidebar
 
 # =============================================================================
 # CONFIGURACION
 # =============================================================================
 
 st.set_page_config(
-    page_title="CAMEL | Radar Cooperativo",
+    page_title="CAMEL | Radar Cooperativo Ecuador",
     page_icon="📈",
     layout="wide",
 )
 
-# Diccionario de meses
-MESES = {
-    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
-    5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
-    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
-}
+aplicar_tema()
 
 
 # =============================================================================
@@ -120,18 +122,13 @@ def obtener_heatmap_indicador(df, codigo, cooperativas_ordenadas,
 # UTILIDADES
 # =============================================================================
 
-def truncar_nombre(n, max_len=30):
-    """Trunca nombres largos manteniendo inicio y final para diferenciar."""
-    if len(n) <= max_len:
-        return n
-    return n[:12] + '...' + n[-(max_len - 15):]
-
-
 # =============================================================================
 # PAGINA PRINCIPAL
 # =============================================================================
 
 def main():
+    render_sidebar(cargar_metadata())
+
     st.title("📈 Indicadores CAMEL")
     st.markdown("Indicadores financieros oficiales del sistema cooperativo ecuatoriano.")
 
@@ -140,26 +137,21 @@ def main():
         df_camel, calidad = cargar_indicadores()
     except FileNotFoundError:
         st.error("No se encontró el archivo de indicadores.")
-        st.info("Ejecuta: `python cooperativas/scripts/procesar_camel.py`")
+        st.info("Ejecuta: `python scripts/procesar_camel.py`")
         return
 
     if df_camel.empty:
         st.warning("No hay datos de indicadores disponibles.")
         return
 
-    # Fechas y segmentos disponibles
+    # Fechas disponibles
     fechas = sorted(df_camel['fecha'].unique(), reverse=True)
-    segmentos_disponibles = sorted(df_camel['segmento'].unique())
 
     # Sidebar - Filtros globales
     st.sidebar.markdown("### Filtros")
 
-    segmento_global = st.sidebar.selectbox(
-        "Segmento",
-        options=["Todos"] + segmentos_disponibles,
-        index=0,
-        key="segmento_camel"
-    )
+    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
+    segmento_global = render_filtro_segmento()
 
     fecha_seleccionada = st.sidebar.selectbox(
         "Fecha de análisis",
@@ -238,23 +230,28 @@ def main():
                 # Colores por cooperativa
                 colores = [obtener_color_cooperativa(coop) for coop in df_ranking_plot['cooperativa']]
 
+                nombres_rank = [str(c) for c in df_ranking_plot['cooperativa']]
+
                 fig = go.Figure(go.Bar(
                     x=df_ranking_plot['valor_pct'],
-                    y=df_ranking_plot['cooperativa'].apply(truncar_nombre),
+                    y=truncar_nombres_unicos(nombres_rank),
                     orientation='h',
                     marker=dict(color=colores),
                     text=df_ranking_plot['valor_pct'].apply(lambda x: f"{x:.1f}%"),
                     textposition='outside',
-                    hovertemplate='<b>%{y}</b><br>Valor: %{x:.2f}%<extra></extra>'
+                    cliponaxis=False,
+                    customdata=nombres_rank,
+                    hovertemplate='<b>%{customdata}</b><br>Valor: %{x:.2f}%<extra></extra>'
                 ))
 
                 fig.update_layout(
                     title=f"{indicador_nombre} - {pd.Timestamp(fecha_seleccionada).strftime('%B %Y').title()}",
-                    height=max(400, len(df_ranking_plot) * 25),
+                    height=altura_por_categorias(len(df_ranking_plot), px_por_categoria=25),
                     xaxis_title='Valor (%)',
                     yaxis_title='',
+                    yaxis=dict(tickfont=dict(size=10), automargin=True),
                     showlegend=False,
-                    margin=dict(l=10, r=10, t=40, b=40)
+                    margin=dict(l=10, r=70, t=40, b=40)
                 )
 
                 st.plotly_chart(fig, width='stretch')
@@ -348,10 +345,20 @@ def main():
                         color_discrete_map=color_map,
                     )
 
+                    # Los nombres completos de las cooperativas desbordaban la
+                    # leyenda horizontal y se superponían entre sí. Se muestran
+                    # truncados de forma consistente con el resto de módulos; el
+                    # nombre completo se conserva en el tooltip de cada punto.
+                    for trazo in fig_evol.data:
+                        trazo.hovertemplate = (
+                            f'<b>{trazo.name}</b><br>Fecha: %{{x|%b %Y}}<br>Valor: %{{y:.2f}}%<extra></extra>'
+                        )
+                        trazo.name = truncar_nombre(trazo.name)
+
                     fig_evol.update_layout(
                         height=450,
-                        legend=dict(orientation='h', yanchor='bottom', y=-0.3, xanchor='center', x=0.5),
                         hovermode='x unified',
+                        **layout_leyenda_series(len(fig_evol.data)),
                     )
 
                     st.plotly_chart(fig_evol, width='stretch')
@@ -432,7 +439,7 @@ def main():
                 zmax = rango[1] if rango else None
 
                 # Truncar nombres largos (mantener final para diferenciar)
-                y_labels = [truncar_nombre(n) for n in heatmap_data.index]
+                y_labels = truncar_nombres_unicos([str(n) for n in heatmap_data.index])
 
                 fig_heat = go.Figure(data=go.Heatmap(
                     z=heatmap_data.values,
@@ -447,10 +454,11 @@ def main():
 
                 fig_heat.update_layout(
                     title=f"Evolución Mensual: {indicador_nombre_heat}",
-                    height=max(400, len(heatmap_data) * 28),
+                    height=altura_por_categorias(len(heatmap_data), px_por_categoria=28),
                     xaxis_title='Período',
                     yaxis_title='',
-                    xaxis={'tickangle': -45},
+                    xaxis={'tickangle': -45, 'automargin': True},
+                    yaxis={'tickfont': {'size': 10}, 'automargin': True},
                     margin=dict(l=10, r=10, t=40, b=80)
                 )
 

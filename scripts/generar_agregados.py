@@ -9,6 +9,11 @@ from pathlib import Path
 import json
 from datetime import datetime
 
+try:
+    from io_atomico import guardar_parquet_atomico
+except ModuleNotFoundError:
+    from scripts.io_atomico import guardar_parquet_atomico
+
 # Rutas
 MASTER_DATA_DIR = Path(__file__).parent.parent / "master_data"
 BALANCE_PATH = MASTER_DATA_DIR / "balance.parquet"
@@ -42,7 +47,7 @@ def main():
     ).reset_index()
 
     # Guardar
-    metricas_sistema.to_parquet(MASTER_DATA_DIR / "agg_metricas_sistema.parquet", index=False)
+    guardar_parquet_atomico(metricas_sistema, MASTER_DATA_DIR / "agg_metricas_sistema.parquet", index=False)
     print(f"    agg_metricas_sistema.parquet: {len(metricas_sistema):,} registros")
 
     # =========================================================================
@@ -58,7 +63,7 @@ def main():
     ).reset_index()
 
     # Guardar
-    ranking_cooperativas.to_parquet(MASTER_DATA_DIR / "agg_ranking_cooperativas.parquet", index=False)
+    guardar_parquet_atomico(ranking_cooperativas, MASTER_DATA_DIR / "agg_ranking_cooperativas.parquet", index=False)
     print(f"    agg_ranking_cooperativas.parquet: {len(ranking_cooperativas):,} registros")
 
     # =========================================================================
@@ -77,7 +82,7 @@ def main():
         valor=('valor', 'sum')
     ).reset_index()
 
-    series_temporales.to_parquet(MASTER_DATA_DIR / "agg_series_temporales.parquet", index=False)
+    guardar_parquet_atomico(series_temporales, MASTER_DATA_DIR / "agg_series_temporales.parquet", index=False)
     print(f"    agg_series_temporales.parquet: {len(series_temporales):,} registros")
 
     # =========================================================================
@@ -98,7 +103,7 @@ def main():
     catalogo = catalogo.sort_values('activos_ultimo', ascending=False).reset_index(drop=True)
     catalogo['ranking'] = range(1, len(catalogo) + 1)
 
-    catalogo.to_parquet(MASTER_DATA_DIR / "agg_catalogo_cooperativas.parquet", index=False)
+    guardar_parquet_atomico(catalogo, MASTER_DATA_DIR / "agg_catalogo_cooperativas.parquet", index=False)
     print(f"    agg_catalogo_cooperativas.parquet: {len(catalogo):,} registros")
 
     # =========================================================================

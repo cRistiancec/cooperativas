@@ -346,6 +346,7 @@ def obtener_color_segmento(segmento: str) -> str:
 
 GRUPOS_INDICADORES = {
     'C - Capital': [
+        'SUF_PAT',
         'VULN_PAT',
         'CART_IMPR_PAT',
         'FK',
@@ -356,6 +357,9 @@ GRUPOS_INDICADORES = {
         'ACT_IMPR',
         'ACT_PROD',
         'AP_PC',
+        'CART_REF',
+        'CART_REEST',
+        'CART_VENCER',
     ],
     'A - Morosidad por Cartera': [
         'MOR_TOT',
@@ -383,6 +387,15 @@ GRUPOS_INDICADORES = {
     'E - Earnings (Rentabilidad)': [
         'ROE',
         'ROA',
+        'INTERM',
+        'MARG_PAT',
+        'MARG_ACT',
+        'REND_CONS',
+        'REND_INMOB',
+        'REND_MICRO',
+        'REND_PROD',
+        'REND_VIV',
+        'REND_EDU',
     ],
     'L - Liquidez': [
         'LIQ',
@@ -428,6 +441,10 @@ ETIQUETAS_INDICADORES = {
     'FK': 'FK',
     'FI': 'FI',
     'CAP_NETO': 'Índice de Capitalización Neto',
+    'SUF_PAT': 'Suficiencia Patrimonial',
+    'CART_REF': 'Cartera de Créditos Refinanciada',
+    'CART_REEST': 'Cartera de Créditos Reestructurada',
+    'CART_VENCER': 'Cartera por Vencer Total',
 }
 
 # Escalas de colores para heatmap
@@ -442,8 +459,14 @@ ESCALAS_COLORES_HEATMAP = {
     'COB_MICRO': 'RdYlGn', 'COB_PROD': 'RdYlGn', 'COB_VIV_IP': 'RdYlGn',
     'COB_EDU': 'RdYlGn',
     'CAP_NETO': 'RdYlGn',
+    'SUF_PAT': 'RdYlGn',
+    'CART_VENCER': 'RdYlGn',
+    'MARG_PAT': 'RdYlGn',
+    'MARG_ACT': 'RdYlGn',
     # Menor es mejor (rojo = alto)
     'ACT_IMPR': 'RdYlGn_r',
+    'CART_REF': 'RdYlGn_r',
+    'CART_REEST': 'RdYlGn_r',
     'MOR_TOT': 'RdYlGn_r', 'MOR_CONS': 'RdYlGn_r', 'MOR_INMOB': 'RdYlGn_r',
     'MOR_MICRO': 'RdYlGn_r', 'MOR_PROD': 'RdYlGn_r', 'MOR_VIV_IP': 'RdYlGn_r',
     'MOR_EDU': 'RdYlGn_r',
@@ -452,9 +475,12 @@ ESCALAS_COLORES_HEATMAP = {
     'GP_ACT': 'RdYlGn_r',
     'VULN_PAT': 'RdYlGn_r',
     'CART_IMPR_PAT': 'RdYlGn_r',
-    # Neutral
+    # Neutral (informativos: sin una dirección "mejor/peor" única en la metodología vigente)
     'FK': 'Blues',
     'FI': 'Blues',
+    'INTERM': 'Blues',
+    'REND_CONS': 'Blues', 'REND_INMOB': 'Blues', 'REND_MICRO': 'Blues',
+    'REND_PROD': 'Blues', 'REND_VIV': 'Blues', 'REND_EDU': 'Blues',
 }
 
 # Rangos de valores para heatmap (en porcentaje)
@@ -467,11 +493,15 @@ RANGOS_HEATMAP = {
     'FK': [0, 30],
     'FI': [100, 130],
     'CAP_NETO': [0, 25],
+    'SUF_PAT': [0, 300],  # P50≈230%, P95 distorsionado por outliers de instituciones muy pequeñas
 
     # A - Calidad de Activos
     'ACT_IMPR': [0, 25],
     'ACT_PROD': [75, 100],
     'AP_PC': [90, 130],
+    'CART_REF': [0, 30],      # P50≈6.8%, P95≈23.5%
+    'CART_REEST': [0, 35],    # P50≈12.8%, P95≈32%
+    'CART_VENCER': [0, 25],   # P50≈16.6%, P95≈21.5%
 
     # A - Morosidad por Cartera
     'MOR_TOT': [0, 15],
@@ -499,6 +529,15 @@ RANGOS_HEATMAP = {
     # E - Earnings (Rentabilidad)
     'ROE': [-5, 15],
     'ROA': [-1, 3],
+    'INTERM': [50, 200],       # P50≈103%, P95≈181%
+    'MARG_PAT': [-30, 20],     # P5≈-25.7%, P50≈0.6%, P95≈13.9%
+    'MARG_ACT': [-5, 5],       # P5≈-3.4%, P50≈0.1%, P95≈2.5%
+    'REND_CONS': [0, 20],      # P50≈14.9%, P95≈16.8%
+    'REND_INMOB': [0, 15],     # P50≈8.3%, P95≈11.1%
+    'REND_MICRO': [0, 25],     # P50≈17.8%, P95≈22.3%
+    'REND_PROD': [0, 15],      # P95≈11.1%, mediana 0 (pocas cooperativas con esta línea)
+    'REND_VIV': [0, 10],       # línea de negocio poco común en el sistema
+    'REND_EDU': [0, 10],       # línea de negocio poco común en el sistema
 
     # L - Liquidez
     'LIQ': [10, 50],

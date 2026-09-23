@@ -24,6 +24,11 @@ try:
 except ModuleNotFoundError:
     from scripts.seps_zip import seleccionar_zips_procesamiento
 
+try:
+    from io_atomico import guardar_parquet_atomico
+except ModuleNotFoundError:
+    from scripts.io_atomico import guardar_parquet_atomico
+
 # Rutas
 INDICADORES_DIR = Path(__file__).parent.parent / "indicadores"
 MASTER_DATA_DIR = Path(__file__).parent.parent / "master_data"
@@ -391,8 +396,17 @@ def procesar_xlsm_indicadores(xlsm_data: bytes, segmento: str) -> pd.DataFrame:
             # Eliminar nulos
             df_melted = df_melted.dropna(subset=['valor', 'fecha'])
 
+            # segmento_historico: valor point-in-time tal como lo reportó la
+            # entidad en este boletín, antes de la unificación posterior
+            # (ver combinar_historico_camel/procesar_todos_indicadores).
+            df_melted['segmento_historico'] = df_melted['segmento']
+            df_melted['segmento_historico_estimado'] = False
+
             # Seleccionar columnas finales
-            df_final = df_melted[['cooperativa', 'segmento', 'fecha', 'codigo', 'indicador', 'valor', 'categoria']]
+            df_final = df_melted[[
+                'cooperativa', 'segmento', 'fecha', 'codigo', 'indicador', 'valor', 'categoria',
+                'segmento_historico', 'segmento_historico_estimado',
+            ]]
 
             print(f"    [OK] {len(df_final):,} registros de indicadores")
             return df_final
@@ -426,6 +440,15 @@ def combinar_historico_camel(
             "indicadores.parquet histórico no tiene las columnas requeridas: "
             + ", ".join(faltantes)
         )
+
+    # segmento_historico: backfill para parquets generados antes de que esta
+    # columna existiera. Igual criterio que balance.parquet — se marca como
+    # ESTIMADO (no point-in-time real) en vez de fingir precisión histórica
+    # que no se puede reconstruir sin reprocesar los ZIP originales.
+    if 'segmento_historico' not in df_historico.columns:
+        df_historico['segmento_historico'] = df_historico['segmento']
+        df_historico['segmento_historico_estimado'] = True
+    columnas = columnas + ['segmento_historico', 'segmento_historico_estimado']
 
     df_historico = df_historico[columnas].copy()
     df_historico['fecha'] = pd.to_datetime(df_historico['fecha'])
@@ -510,6 +533,14 @@ def procesar_todos_indicadores():
     if coops_cambiaron:
         print(f"Cooperativas con cambio de segmento: {len(coops_cambiaron)} (unificando al ultimo)")
     df_completo['segmento'] = df_completo['cooperativa'].map(ultimo_segmento)
+    df_completo['segmento_actual'] = df_completo['segmento']
+    if 'segmento_historico' not in df_completo.columns:
+        df_completo['segmento_historico'] = df_completo['segmento']
+        df_completo['segmento_historico_estimado'] = True
+    df_completo['segmento_historico'] = df_completo['segmento_historico'].where(
+        df_completo['segmento_historico'].notna(), df_completo['segmento']
+    )
+    df_completo['segmento_historico_estimado'] = df_completo['segmento_historico_estimado'].fillna(True)
 
     # Deduplicar
     df_completo = df_completo.drop_duplicates(
@@ -519,7 +550,7 @@ def procesar_todos_indicadores():
     print(f"Registros tras deduplicar: {len(df_completo):,}")
 
     # Guardar
-    df_completo.to_parquet(output_path, index=False)
+    guardar_parquet_atomico(df_completo, output_path, index=False)
     size_mb = output_path.stat().st_size / (1024 * 1024)
 
     print(f"\n[OK] Guardado: {output_path}")

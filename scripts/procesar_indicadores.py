@@ -8,6 +8,8 @@ Los archivos .xlsm contienen tablas dinámicas con todos los meses del año.
 Los datos crudos están en xl/pivotCache/pivotCacheRecords*.xml
 """
 
+import ctypes
+import gc
 import zipfile
 import xml.etree.ElementTree as ET
 import pandas as pd
@@ -23,6 +25,11 @@ try:
 except ModuleNotFoundError:
     from scripts.seps_zip import seleccionar_zips_procesamiento
 
+try:
+    from io_atomico import guardar_parquet_atomico
+except ModuleNotFoundError:
+    from scripts.io_atomico import guardar_parquet_atomico
+
 
 # Rutas
 INDICADORES_DIR = Path(__file__).parent.parent / "indicadores"
@@ -33,6 +40,39 @@ NS = {'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 
 # Archivos a ignorar
 IGNORAR = ['CONAFIPS', 'FINANCOOP']
+
+try:
+    _LIBC = ctypes.CDLL("libc.so.6")
+except OSError:
+    _LIBC = None  # no-op fuera de Linux (p. ej. desarrollo local en macOS/Windows)
+
+
+def _liberar_memoria_al_os():
+    """
+    Causa raíz diagnosticada 14-sep-2026 (hardening P0): parsear cada
+    Boletín (XML de pivot cache de hasta ~120 MB, vía `ET.fromstring` — ver
+    `parsear_cache_records`) genera decenas de miles de objetos Python
+    (cadenas, dicts, el árbol XML completo) que se liberan correctamente a
+    nivel de Python (`gc.collect()` los recolecta), pero CPython/glibc no le
+    devuelve esas páginas al sistema operativo automáticamente — el RSS del
+    proceso queda "atascado" en el pico alcanzado. Procesando los 4 archivos
+    del ZIP mensual (Mutualistas, Segmento 1, 2, 3) uno tras otro en el
+    mismo proceso, sin esta función, el RSS medido creció 101→2050→2988→
+    4325 MB (`ru_maxrss`) — suficiente para que el proceso muriera por OOM
+    en el paso de Segmento 3 en un entorno con ~7-8 GB de RAM disponible,
+    aunque Segmento 3 por sí solo procesa en ~19s sin problema.
+
+    `malloc_trim(0)` (glibc) fuerza la devolución de memoria libre al SO.
+    Verificado: tras cada archivo, el RSS real (`/proc/self/status` VmRSS)
+    vuelve a ~105 MB en los 3 segmentos reales, en vez de acumularse. No
+    cambia ningún resultado — es limpieza de memoria, no lógica de negocio.
+    """
+    gc.collect()
+    if _LIBC is not None:
+        try:
+            _LIBC.malloc_trim(0)
+        except Exception:
+            pass
 
 
 def extraer_lookup_tables(zip_file: zipfile.ZipFile, cache_def_path: str) -> Dict[str, List]:
@@ -234,11 +274,17 @@ def procesar_todos_indicadores():
                     # Leer XLSM en memoria y procesar
                     xlsm_data = main_zip.read(xlsm_name)
                     df = procesar_xlsm_desde_bytes(xlsm_data, segmento)
+                    del xlsm_data
 
                     if not df.empty:
                         df['ARCHIVO_ORIGEN'] = filename
                         df['ANIO_ARCHIVO'] = year
                         todos_los_datos.append(df)
+
+                    # Ver _liberar_memoria_al_os(): sin esto, el RSS del
+                    # proceso se acumula archivo tras archivo hasta agotar
+                    # la memoria disponible en el paso de Segmento 3.
+                    _liberar_memoria_al_os()
 
         except Exception as e:
             print(f"  [ERROR] Error procesando ZIP: {e}")
@@ -300,7 +346,7 @@ def procesar_todos_indicadores():
     # Guardar únicamente el staging raw. procesar_pyg.py lo fusiona con el
     # histórico publicado; nunca se debe sobrescribir pyg.parquet desde aquí.
     indicadores_path = MASTER_DATA_DIR / "indicadores_raw.parquet"
-    df_completo.to_parquet(indicadores_path, index=False)
+    guardar_parquet_atomico(df_completo, indicadores_path, index=False)
     size_mb = indicadores_path.stat().st_size / (1024 * 1024)
     print(f"  indicadores_raw.parquet: {len(df_completo):,} registros, {size_mb:.2f} MB")
 

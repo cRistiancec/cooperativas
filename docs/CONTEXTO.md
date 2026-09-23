@@ -282,10 +282,82 @@ Optimizaciones aplicadas:
 
 **IMPORTANTE**: Si se regeneran los parquets, asegurar que los scripts de procesamiento mantengan la exclusión de `ruc`/`nivel` y el uso de category dtypes.
 
+## Módulos de riesgo (ampliación — ver `AUDITORIA_MOTOR_INDICADORES.md`, `CATALOGO_INDICADORES.md`, `docs/RIESGO_METODOLOGIA.md`)
+
+Además de los 4 módulos originales (Panorama, Balance, PyG, CAMEL), el proyecto
+tiene 11 páginas adicionales y un motor de indicadores central. **Todo esto
+está en el working tree pero sin commitear** (ver `git status` — 47 archivos
+modificados/nuevos a la fecha de esta nota); antes de commitear, releer este
+archivo y `docs/RIESGO_METODOLOGIA.md` completos.
+
+```
+pages/
+├── 5_Riesgo_Liquidez.py
+├── 6_Riesgo_Credito.py
+├── 7_Riesgo_Solvencia.py          # FK/FI/CAP_NETO/VULN_PAT — NO es Solvencia oficial (ver nota abajo)
+├── 8_Riesgo_Concentracion.py      # HHI, CR-N, Gini, Lorenz
+├── 9_Riesgo_Sistemico.py          # Índice de Importancia Sistémica (tamaño+sustituibilidad, sin interconectividad)
+├── 10_CAMEL_Score.py
+├── 11_Alertas_Tempranas.py        # Semáforo por regla, SIN persistencia/velocidad/breadth todavía
+├── 12_Stress_Testing.py
+├── 13_Modelos_Predictivos.py
+├── 14_Machine_Learning.py
+└── 15_Asistente_IA.py
+
+analytics/
+├── financial_engine.py    # Fachada única — importar SOLO de aquí desde pages/
+├── liquidez.py, credito.py, solvencia.py, concentracion.py, sistemico.py,
+│   camels_score.py, alertas.py, stress_testing.py   (dominios originales)
+├── rentabilidad.py, crecimiento.py                   # Fase 2.3: tasas implícitas, spread, crecimiento
+├── indices_ejecutivos.py                             # Fase 2.4: 6 índices compuestos (Score, Vulnerabilidad,
+│                                                        Fortaleza, Resiliencia, Estabilidad, Riesgo Integral)
+└── catalogo_indicadores.py                            # Metadata para generar CATALOGO_INDICADORES.md
+
+models/       anomalias.py, clustering.py, forecast.py, prediccion_morosidad.py
+services/     asistente_ia.py
+ui/           filtros.py (Filtro Global de Segmento, compartido entre TODAS las páginas), header.py, sidebar.py, theme.py
+config/       umbrales_alerta.py (umbrales de alerta, declarados "referenciales", NO regulatorios), constants.py
+```
+
+**IMPORTANTE — no confundir CAP_NETO con Solvencia oficial**: `CAP_NETO`
+(FK/FI, código SEPS `I50_Indi_capi_neto`) es un indicador de vulnerabilidad
+patrimonial, no el ratio de Solvencia regulatorio (Patrimonio Técnico
+Constituido / Activos Ponderados por Riesgo, mínimo 9% JPRF). Ese ratio
+requiere el **Formulario de Solvencia (FS01)**, fuente que el ETL actual no
+descarga ni procesa — solo procesa el boletín de Estados Financieros. Ver
+`docs/RIESGO_METODOLOGIA.md` §3.2 para el detalle completo. `pages/7_Riesgo_Solvencia.py`
+ya tiene una nota aclaratoria visible en la UI.
+
+**Clasificación de indicadores** (usar siempre al agregar uno nuevo):
+`OFICIAL_SEPS` (de `indicadores.parquet`) / `DERIVADO` (calculado desde cuentas
+crudas oficiales) / `ANALÍTICO` (construcción propia, declarar como tal) /
+`INTERNATIONAL_COMPLEMENT` (metodología BIS/IMF sin equivalente ecuatoriano).
+
+**Lo que el motor de riesgo todavía NO tiene** (propuesto, no construido —
+ver `docs/RIESGO_METODOLOGIA.md` §5-6 para el detalle y la razón de no haberlo
+construido sin validación previa):
+- Persistencia de alertas (cuántos meses consecutivos lleva activa una señal).
+- Breadth ponderado (% de activos/cartera/depósitos del sistema afectados por
+  un deterioro específico) — existe concentración de mercado (HHI/CR-N/Gini),
+  pero no breadth de una alerta.
+- Reglas de interacción entre indicadores documentadas (p. ej. morosidad↑ +
+  cobertura↓ + ROA↓ como señal compuesta).
+- Clasificación de contracción sistémica (Normal → Desaceleración → Estrés).
+- IPSF (índice de presión financiera sistémica) — deliberadamente no construido
+  hasta validar los insumos anteriores.
+- Backtesting contra eventos reales (liquidaciones/fusiones) — no existe un
+  registro estructurado de eventos de referencia.
+- Tabla de identidad histórica de entidades con RUC
+  (`master_data/entidades_cooperativas.parquet`) — el RUC se excluyó de
+  `balance.parquet`/`pyg.parquet` por peso (ver optimización de memoria abajo);
+  reintroducirlo solo en una tabla ligera aparte, no en los Parquet grandes.
+
 ## Próximo paso sugerido
 - Agregar exportación de datos a Excel
 - Agregar comparativo entre segmentos
 - Agregar promedios del sistema como referencia en gráficos CAMEL
+- Fases de riesgo propuestas en `docs/RIESGO_METODOLOGIA.md` §6 (persistencia →
+  breadth → registro de eventos → recién entonces IPSF/backtesting)
 
 ## Notas técnicas importantes
 
@@ -435,6 +507,200 @@ El workflow de bancos no se ejecutó durante 1 mes porque el branch default era 
 **Regla**: Siempre agregar `observed=True` en cualquier `groupby()` o `pivot_table()` que opere sobre columnas con category dtype. En este proyecto: `cooperativa`, `segmento`, `codigo`, `cuenta`.
 
 ## Historial de cambios
+
+### 2026-09-14 (noche, cierre técnico) - Pipeline reproducible: memoria, regeneración real, integridad
+
+Segunda fase de hardening la misma noche. Detalle completo en
+`docs/RIESGO_METODOLOGIA.md` §20 y `docs/CHANGELOG_RIESGO.md`; resumen:
+
+- **Causa raíz real del "cuello de botella de Segmento 3" diagnosticada**:
+  no era el archivo (procesa en 19s aislado) sino acumulación de memoria del
+  PROCESO al procesar los 4 archivos del ZIP secuencialmente (glibc no
+  devuelve memoria liberada al SO) — RSS subía a 4.3+ GB, OOM en el último
+  archivo. Fix de 8 líneas (`gc.collect()` + `malloc_trim(0)` tras cada
+  archivo) en `scripts/procesar_indicadores.py`. Una reescritura alternativa
+  con `ET.iterparse()` (streaming) se probó equivalente pero no más rápida
+  ni con memoria menor demostrada — descartada por riesgo sin beneficio.
+- **Regeneración real ejecutada** (no solo el código verificado):
+  `indicadores_raw.parquet`, `master_data/indicadores.parquet` y
+  `master_data/pyg.parquet` — equivalencia numérica exacta confirmada
+  (0 diferencias) contra los archivos anteriores. `pyg.parquet` ahora tiene
+  `segmento_historico` genuinamente point-in-time para 2026 (verificado con
+  `CAÑAR LTDA`: reportó Segmento 3 ene-may 2026, migró a Segmento 2 desde
+  jun-2026 — capturado correctamente).
+- **Escritura atómica nueva**: `scripts/io_atomico.py` — ningún
+  `master_data/*.parquet` puede quedar parcialmente escrito ante un fallo a
+  mitad de proceso; aplicado a los 10 sitios de escritura del pipeline.
+- **YoY centralizado**: `pages/2_Balance_General.py` ya no reimplementa el
+  cálculo de crecimiento mensual — usa `analytics/crecimiento.py` (nueva
+  función), equivalencia verificada.
+- **3 `pivot_table()` corregidos** (de ~11 candidatos; los otros 8 no
+  disparan el warning en uso real, no se tocaron).
+- Workflow: verificado (sin cambios necesarios) que ya distingue los 5
+  estados pedidos (NO_NEW_DATA/SUCCESS/WARNING/OPTIONAL_COMPONENT_FAILURE/
+  CRITICAL_FAILURE).
+- Tests: 116 → 122 (330 subpruebas), 0 regresiones.
+- Ningún commit realizado.
+
+### 2026-09-14 (noche) - Fase de hardening: validación, calibración y robustez
+
+Continuación directa de la entrada "(tarde)" de este mismo día. Detalle
+completo en `docs/CHANGELOG_RIESGO.md`; resumen aquí:
+
+- **Bug real corregido**: `analytics/riesgo_sistemico_estado.py` permitía que
+  una caída aislada en una sola dimensión de crecimiento (sin breadth ni
+  persistencia) alcanzara `CONTRACCIÓN SECTORIAL` — encontrado con una
+  batería de 8 escenarios sintéticos A-H, corregido exigiendo evidencia
+  multidimensional. Los 8 escenarios producen ahora resultados coherentes.
+- **`scripts/procesar_pyg.py` corregido** (mismo defecto de segmentación que
+  balance/indicadores) a nivel de código; `master_data/pyg.parquet` no se
+  regeneró por un hallazgo de performance no relacionado (ver abajo).
+- **Calibraciones investigadas con datos reales, no cambiadas**: persistencia
+  (~54%, estable y con tendencia secular real, no ruido) y breadth (25%,
+  nunca cruzado por la población "alerta roja" en 6.5 años). Ambos umbrales
+  se mantienen con la evidencia ahora documentada.
+- **Reinterpretación corregida**: la correlación A/B del IPSF (0.968) se
+  había leído como "evidencia de que el índice funciona" — es, en gran
+  parte, redundancia entre 2 de sus 3 componentes (misma fuente por
+  construcción). Corregido en el docstring y en la UI.
+- **Etiquetado explícito como dato**: eventos proxy y resultados de
+  backtesting ahora llevan columnas/campos con la etiqueta adjunta
+  (`TIPO_EVENTO_PROXY`, `"BACKTESTING PROXY"`), no solo en el docstring.
+- **Control determinístico nuevo**: `services/asistente_ia.py` ahora filtra
+  la palabra "crisis" en las respuestas del modo Claude con código Python
+  (no solo con el prompt) y adjunta una advertencia visible.
+- **Arquitectura consolidada**: `analytics/financial_engine.py` ahora
+  re-exporta los 8 módulos que la entrada anterior había creado sin
+  conectar a la fachada; 3 páginas (`1`, `9`, `11`) actualizaron sus imports;
+  el test de guardia que debía haber detectado esto se amplió para cubrirlos.
+- **Workflow**: pasos opcionales pasaron de `|| echo warning` (silencioso) a
+  `continue-on-error: true` + un resumen final categorizado en
+  `$GITHUB_STEP_SUMMARY`.
+- **Hallazgo nuevo, no resuelto**: el parseo del Boletín Financiero
+  Segmento 3 en `procesar_indicadores.py` no completó en >10 minutos en este
+  entorno (escala no lineal frente a Segmento 1/2) — código pre-existente,
+  no tocado por los cambios de esta sesión, documentado como riesgo residual.
+- **Tests**: 110 → 116 (330 subpruebas), 0 regresiones. Un test pre-existente
+  (`test_actualizacion.py`) se rompió con el primer intento del fix de PyG y
+  se corrigió haciendo la función más defensiva, sin tocar el test.
+- Ningún cambio de esta fase fue commiteado.
+
+### 2026-09-14 (tarde) - Cierre e implementación integral tras la auditoría de la mañana
+
+Continuación directa de la entrada anterior (auditoría). Ver `docs/CHANGELOG_RIESGO.md`
+para el detalle completo componente por componente; resumen aquí:
+
+- **Solvencia oficial (FS01) integrada**: se encontró que la SEPS publica un
+  boletín público separado ("Patrimonio Técnico") con los datos de la ficha
+  FS01. Pipeline completo nuevo: `descargar_patrimonio_tecnico()` en
+  `scripts/descargar_datos_seps.py` → `scripts/procesar_solvencia.py` (ETL) →
+  `analytics/solvencia.py::evaluar_solvencia_oficial()` → pestaña nueva en
+  `pages/7_Riesgo_Solvencia.py`. Cobertura confirmada: solo Segmento
+  1/Mutualistas/FINANCOOP (Segmento 2/3 sin fuente pública). 3.548 registros,
+  2020-01 a 2026-07, 0 discrepancias en la verificación PTC/APPR recalculado.
+  `CAP_NETO` (FK/FI) se mantiene estrictamente separado del 9% regulatorio en
+  todo el sistema (nunca se le aplica ese umbral).
+- **Defecto corregido — `segmento` retroactivo**: `balance.parquet` e
+  `indicadores.parquet` unificaban el segmento de cada cooperativa al último
+  conocido, aplicado a toda su historia. Se añadieron (aditivo, sin tocar
+  `segmento`) `segmento_historico`, `segmento_actual`,
+  `segmento_historico_estimado`. Regenerados ambos parquets (balance: 24.404.894
+  filas, sin cambio de conteo; indicadores: 611.881 filas). **Limitación
+  documentada**: por diseño del ETL incremental (no reprocesa meses ya
+  presentes), el 100% del histórico regenerado quedó `estimado=True`,
+  incluyendo el corte más reciente — el mecanismo es correcto hacia adelante
+  (próximos meses procesados como "nuevos" sí obtendrán el valor real).
+  `procesar_pyg.py` tiene el mismo defecto y **no se corrigió** (gap
+  documentado). Ver `docs/RIESGO_METODOLOGIA.md` §18.
+- **9 módulos analíticos nuevos** en `analytics/`: `data_quality.py`,
+  `persistencia.py`, `breadth.py`, `interaccion.py`, `eventos.py`,
+  `backtesting.py`, `ipsf.py`, `riesgo_sistemico_estado.py`, más
+  `scripts/generar_entidades.py` → `master_data/entidades_cooperativas.parquet`
+  (tabla ligera de identidad, 259 entidades, 51 con RUC). Todos con datos
+  reales verificados — detalle y cifras en `docs/RIESGO_METODOLOGIA.md` §8-§18.
+- **Integrado en páginas existentes, sin crear páginas nuevas**: pestaña
+  "⏱️ Persistencia, Amplitud e Interacción" en `pages/11_Alertas_Tempranas.py`;
+  pestañas "🧭 Estado Sistémico (Experimental)" y "🌡️ IPSF (Experimental)" en
+  `pages/9_Riesgo_Sistemico.py`; sección "Calidad de datos e identidad de
+  entidades" en `pages/1_Panorama.py`.
+- **Auditoría de ML/Modelos Predictivos y Asistente IA**: `models/prediccion_morosidad.py`
+  y `models/forecast.py` etiquetados en la UI como "ANALÍTICO NO VALIDADO /
+  EXPERIMENTAL" (split temporal correcto, pero una sola ventana de holdout, sin
+  backtesting contra eventos). `models/anomalias.py`/`clustering.py` (no
+  supervisados) sin cambios de fondo. `services/asistente_ia.py`: prompt de
+  sistema reforzado para distinguir hecho/inferencia y responder
+  "Información insuficiente para determinarlo." cuando corresponde.
+- **Workflow** (`.github/workflows/actualizar_datos.yml`): pasos nuevos
+  `procesar_solvencia.py` y `generar_entidades.py`, best-effort (`|| echo
+  ::warning`, no bloquean el pipeline si fallan); `git add` de
+  `solvencia.parquet`/`entidades_cooperativas.parquet` protegido con `|| true`
+  (pueden no existir en una corrida donde esas fuentes no tuvieron datos
+  nuevos).
+- **Tests**: 29 pruebas nuevas — `tests/test_riesgo_ampliado.py` (21,
+  sintéticas: persistencia, breadth, interacción, data quality, estado
+  sistémico, eventos, backtesting, IPSF) + 8 nuevas en
+  `tests/test_consistencia_datos.py` (datos reales: segmento histórico,
+  cobertura FS01, identidad de entidades). Suite completa: **110 pruebas / 330
+  subpruebas, sin regresiones** (antes: 81 pruebas).
+- **No se hizo commit** de ningún cambio (instrucción explícita del pedido) —
+  todo queda preparado en el working tree para revisión.
+
+### 2026-09-14 - Auditoría de indicadores contra Fichas Metodológicas SEPS v3.0 (63 fichas oficiales)
+
+- Insumo: `Fichas-Metodologicas-de-Indicadores-Financieros_V3.0.pdf` (31-jul-2026),
+  adjuntado por el usuario. Auditoría de las 63 fichas oficiales contra los 41
+  códigos de `indicadores.parquet`, siguiendo la misma metodología rigurosa que
+  `AUDITORIA_MOTOR_INDICADORES.md` (28-jul-2026) usó contra el script R.
+- **Hallazgo material**: los indicadores 58-63 de la ficha (Patrimonio Técnico
+  Primario/Secundario/Constituido, Activos Ponderados por Riesgo, **Solvencia**,
+  Porcentaje Técnico Requerido) requieren el **Formulario de Solvencia (FS01)**
+  como fuente adicional — el ETL actual (`procesar_camel.py`) solo procesa el
+  boletín de Estados Financieros. Verificado programáticamente: ninguno de los
+  41 códigos de `indicadores.parquet` corresponde a estos 6 indicadores. La
+  plataforma **no puede calcular el ratio de Solvencia oficial (mínimo
+  regulatorio 9%)** con las fuentes que ingesta hoy.
+- Consecuencia detectada: `config/umbrales_alerta.py` usaba `alerta_amarilla=0.09`
+  para `CAP_NETO` (FK/FI, un indicador de vulnerabilidad patrimonial distinto),
+  coincidiendo numéricamente con el 9% de Solvencia oficial sin aclarar que son
+  indicadores diferentes. **Corregido**: comentario explícito en
+  `config/umbrales_alerta.py` + nota visible en `pages/7_Riesgo_Solvencia.py`
+  (`st.caption`) aclarando que la página usa vulnerabilidad patrimonial (FK,
+  FI, CAP_NETO, VULN_PAT), no el ratio de Solvencia regulatorio. El valor del
+  umbral (9%/6%) no se modificó — solo se documentó, siguiendo la regla de "no
+  corregir silenciosamente" cuando hay ambigüedad metodológica.
+- Resto de las 63 fichas (1-57): sin discrepancias de fórmula, dirección
+  (mayor/menor es mejor) ni unidad frente al código actual. La granularidad
+  histórica prioritario/ordinario de morosidad y cobertura (fichas 6,7,11,12,
+  19,20,24,25) no es reconstruible después de may-2021 porque la propia SEPS
+  dejó de publicarla a ese nivel — confirma, con fuente independiente, el mismo
+  hallazgo que ya documentó `AUDITORIA_MOTOR_INDICADORES.md` (Categoría 2).
+- **Creado** `docs/RIESGO_METODOLOGIA.md`: documento de metodología de riesgo
+  que consolida fuentes, clasificación (`OFICIAL_SEPS`/`DERIVADO`/`ANALÍTICO`/
+  `INTERNATIONAL_COMPLEMENT`), separación indicador/umbral, y un inventario
+  honesto de qué componentes del "sistema de vigilancia" (persistencia de
+  alertas, breadth, interacción entre riesgos, clasificación de contracción
+  sistémica, IPSF, backtesting, identidad histórica con RUC) están
+  implementados vs. propuestos-no-construidos, con la razón de no haberlos
+  construido sin validar antes sus insumos.
+- **Decisión de alcance**: no se construyeron IPSF, backtesting, breadth
+  ponderado, persistencia de alertas ni clasificación de contracción sistémica
+  en esta sesión. Son componentes grandes cuya construcción apresurada sin
+  validar sus insumos (persistencia, breadth, registro de eventos de
+  referencia) violaría el principio explícito del pedido de "calidad sobre
+  cantidad" en señales de riesgo. Se documentaron como fases propuestas en
+  `docs/RIESGO_METODOLOGIA.md` §6, siguiendo el mismo patrón de
+  auditar-proponer-confirmar que ya usó `AUDITORIA_MOTOR_INDICADORES.md`.
+- Verificación: suite completa de pruebas re-ejecutada tras los dos cambios
+  (`config/umbrales_alerta.py`, `pages/7_Riesgo_Solvencia.py`) — 81 pruebas /
+  330 subpruebas, sin regresiones.
+- **Nota**: al iniciar esta sesión, `docs/CONTEXTO.md` no reflejaba el trabajo
+  ya presente en el working tree (páginas 5-15, `analytics/` ampliado,
+  `models/`, `services/`, `ui/`, `CATALOGO_INDICADORES.md`,
+  `AUDITORIA_MOTOR_INDICADORES.md`, `SEGMENTACION_TRANSVERSAL.md`,
+  `VALIDACION_FINAL_DATOS.md`) — 47 archivos nuevos/modificados sin commitear.
+  Se actualizó la sección "Módulos de riesgo" de este archivo para no perder
+  ese contexto en la próxima sesión. Ningún commit se creó en esta sesión (no
+  fue solicitado explícitamente).
 
 ### 2026-07-17 - Pipeline mensual endurecido y datos junio 2026
 

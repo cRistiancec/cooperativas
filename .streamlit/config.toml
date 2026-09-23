@@ -1,12 +1,31 @@
+# RADAR COOPERATIVO ECUADOR — COSEDE
+# Tema oscuro institucional (azul petróleo / azul institucional)
+
 [theme]
-primaryColor = "#2c5282"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f7fafc"
-textColor = "#1a202c"
+base = "dark"
+primaryColor = "#2563EB"
+backgroundColor = "#0A1120"
+secondaryBackgroundColor = "#131C2E"
+textColor = "#E7EEF9"
 font = "sans serif"
 
 [server]
 headless = true
-enableCORS = false
+# enableCORS debe ser true cuando enableXsrfProtection es true (la protección
+# CSRF de Streamlit depende de CORS); dejarlo en false generaba la advertencia
+# "enableCORS=false is not compatible with enableXsrfProtection=true" en cada
+# arranque y Streamlit lo sobreescribía de todos modos. Se fija explícito
+# para reflejar el comportamiento real y eliminar la advertencia.
+enableCORS = true
 enableXsrfProtection = true
 maxUploadSize = 200
+# El watcher de archivos es una característica de desarrollo (recarga en
+# caliente); en producción no debe haber ningún proceso modificando archivos
+# del proyecto, y dejarlo activo solo añade riesgo de reinicios inesperados
+# del servidor. Verificado en la auditoría de producción: con el watcher
+# activo, cambios concurrentes de archivos (p. ej. otro proceso escribiendo
+# en logs/) podían disparar un cierre del servidor durante el arranque.
+fileWatcherType = "none"
+
+[client]
+toolbarMode = "minimal"

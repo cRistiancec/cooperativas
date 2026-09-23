@@ -1,0 +1,81 @@
+/* ============================================================================
+   RADAR COOPERATIVO ECUADOR — COSEDE
+   theme.css — Tokens de diseño y base del modo oscuro institucional
+   ========================================================================= */
+
+:root {
+    /* ---- Superficies (dark institucional, azul petróleo) ---- */
+    --sps-bg:            #0A1120;   /* fondo app */
+    --sps-bg-2:         #0E1526;   /* fondo secundario */
+    --sps-surface:       #131C2E;   /* tarjetas */
+    --sps-surface-2:     #17223A;   /* tarjetas elevadas / hover */
+    --sps-border:        #24304A;   /* bordes sutiles */
+    --sps-border-strong: #33436B;
+
+    /* ---- Marca ---- */
+    --sps-primary:       #2563EB;   /* azul institucional */
+    --sps-primary-600:   #1D4ED8;
+    --sps-petrol:        #0E4D64;   /* azul petróleo */
+    --sps-petrol-2:      #14657F;
+    --sps-navy:          #0B2545;
+
+    /* ---- Texto ---- */
+    --sps-text:          #E7EEF9;
+    --sps-text-muted:    #9DB0CE;
+    --sps-text-dim:      #6C7C9C;
+
+    /* ---- Acentos semánticos (semáforo) ---- */
+    --sps-green:         #22C55E;
+    --sps-green-dim:     rgba(34, 197, 94, 0.14);
+    --sps-amber:         #F59E0B;
+    --sps-amber-dim:     rgba(245, 158, 11, 0.14);
+    --sps-red:           #EF4444;
+    --sps-red-dim:       rgba(239, 68, 68, 0.14);
+    --sps-cyan:          #22D3EE;
+
+    /* ---- Radios / sombras / tipografía ---- */
+    --sps-radius:        14px;
+    --sps-radius-sm:     10px;
+    --sps-shadow:        0 8px 30px rgba(0, 0, 0, 0.35);
+    --sps-shadow-sm:     0 2px 12px rgba(0, 0, 0, 0.25);
+    --sps-font:          'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --sps-mono:          'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+}
+
+/* ---- Base tipográfica ---- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+html, body, [class*="css"], .stApp, [data-testid="stAppViewContainer"] {
+    font-family: var(--sps-font);
+}
+
+/* ---- Fondo de la aplicación ---- */
+.stApp,
+[data-testid="stAppViewContainer"] {
+    background:
+        radial-gradient(1200px 600px at 15% -10%, rgba(37, 99, 235, 0.10), transparent 55%),
+        radial-gradient(1000px 500px at 100% 0%, rgba(14, 77, 100, 0.14), transparent 50%),
+        var(--sps-bg);
+    color: var(--sps-text);
+}
+
+[data-testid="stHeader"] {
+    background: transparent;
+}
+
+.block-container {
+    padding-top: 1.4rem;
+    max-width: 1500px;
+}
+
+/* ---- Texto general ---- */
+h1, h2, h3, h4, h5, h6 { color: var(--sps-text); letter-spacing: -0.01em; }
+p, span, label, li { color: var(--sps-text); }
+.stMarkdown, .stCaption, [data-testid="stCaptionContainer"] { color: var(--sps-text-muted); }
+a { color: var(--sps-primary); }
+hr { border-color: var(--sps-border); }
+
+/* ---- Ocultar chrome por defecto de Streamlit ---- */
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+[data-testid="stDecoration"] { display: none; }

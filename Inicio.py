@@ -1,193 +1,71 @@
 # -*- coding: utf-8 -*-
 """
-Radar Cooperativo Ecuador
-Dashboard de análisis financiero para cooperativas ecuatorianas.
+RADAR COOPERATIVO ECUADOR — COSEDE
+Sistema Inteligente para el Monitoreo Integral del Sector Financiero Popular y Solidario.
 
-Ejecutar con: streamlit run Inicio.py --server.port 8502
+Marca corporativa: DATAMETRICS — Business Intelligence and Analytics
+Autor institucional: Eco. Cristian Coronel Quezada MBA
+CEO · DATAMETRICS
+
+Ejecutar con: streamlit run Inicio.py
 """
 
+from datetime import datetime
+
+import pandas as pd
 import streamlit as st
-import json
-from pathlib import Path
+
+from ui import aplicar_tema, render_filtro_segmento, render_header, render_sidebar
+from ui.header import LOGO_PATH
+from utils.charts import crear_sparkline, crear_gauge, COLORES
+from utils.data_loader import (
+    cargar_metadata,
+    obtener_serie_sistema,
+    obtener_ultima_fecha,
+)
 
 # =============================================================================
 # CONFIGURACION DE PAGINA (debe ser lo primero)
 # =============================================================================
 
 st.set_page_config(
-    page_title="Radar Cooperativo Ecuador",
-    page_icon="🏦",
+    page_title="Radar Cooperativo Ecuador | COSEDE",
+    # Icono de la pestaña del navegador: logo oficial DATAMETRICS (mismo
+    # archivo que el header). Si aún no está colocado, cae al escudo anterior.
+    page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else "🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'About': """
-        ## Radar Cooperativo Ecuador
-        Plataforma de análisis del sistema cooperativo ecuatoriano.
+        "About": """
+        ## RADAR COOPERATIVO ECUADOR
+        Sistema Inteligente para el Monitoreo Integral del Sector Financiero
+        Popular y Solidario.
 
-        **Fuente de datos:** Superintendencia de Economía Popular y Solidaria
-        **Período:** 2018 - 2025 (8 años de historia)
-        **Cooperativas:** 259 instituciones (Segmentos 1, 2, 3 y Mutualistas)
+        **Marca:** DATAMETRICS — Business Intelligence and Analytics
+
+        **Autor:** Eco. Cristian Coronel Quezada MBA — CEO · DATAMETRICS.
+
+        **Fuente de datos:** Superintendencia de Economía Popular y Solidaria (SEPS).
         """
     },
 )
 
-# =============================================================================
-# ESTILOS CSS GLOBALES
-# =============================================================================
-
-st.markdown("""
-<style>
-    /* Fuente principal */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-    }
-
-    /* Header principal */
-    .main-header {
-        background: linear-gradient(135deg, #1a4731 0%, #276749 50%, #2f855a 100%);
-        padding: 1.5rem 2rem;
-        border-radius: 16px;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 40px rgba(26, 71, 49, 0.3);
-    }
-
-    .main-header h1 {
-        color: white;
-        font-size: 2.2rem;
-        font-weight: 700;
-        margin: 0;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
-
-    .main-header p {
-        color: rgba(255,255,255,0.85);
-        font-size: 1rem;
-        margin: 0.5rem 0 0 0;
-    }
-
-    /* Tarjetas */
-    .card {
-        background: linear-gradient(145deg, #ffffff 0%, #f7fafc 100%);
-        border-radius: 16px;
-        padding: 1.5rem;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        border: 1px solid rgba(226, 232, 240, 0.8);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 12px 40px rgba(0,0,0,0.12);
-    }
-
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #f7fafc 0%, #edf2f7 100%);
-        min-width: 220px !important;
-        max-width: 220px !important;
-        width: 220px !important;
-    }
-
-    /* Ocultar elementos de Streamlit */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-
-    /* Tabs personalizados */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background: #f7fafc;
-        padding: 0.5rem;
-        border-radius: 12px;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        border-radius: 8px;
-        padding: 0.75rem 1.5rem;
-        font-weight: 500;
-    }
-
-    .stTabs [aria-selected="true"] {
-        background: white;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-
-    /* Metricas */
-    [data-testid="stMetricValue"] {
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #1a4731;
-    }
-
-    [data-testid="stMetricLabel"] {
-        font-size: 0.85rem;
-        color: #718096;
-        text-transform: uppercase;
-    }
-
-    /* Info box */
-    .info-box {
-        background: linear-gradient(135deg, #276749 0%, #2f855a 100%);
-        color: white;
-        padding: 1rem;
-        border-radius: 12px;
-        margin-bottom: 1rem;
-        text-align: center;
-        box-shadow: 0 4px 15px rgba(39, 103, 73, 0.3);
-    }
-
-    .info-box h4 {
-        margin: 0;
-        font-size: 0.9rem;
-        font-weight: 600;
-        opacity: 0.95;
-        letter-spacing: 0.5px;
-    }
-
-    .info-box p {
-        margin: 0.5rem 0 0 0;
-        font-size: 1.5rem;
-        font-weight: 700;
-    }
-
-    /* Segmentos */
-    .segment-box {
-        background: linear-gradient(145deg, #ffffff 0%, #f0fff4 100%);
-        border-radius: 12px;
-        padding: 1rem 1.25rem;
-        border: 1px solid #c6f6d5;
-        text-align: center;
-    }
-
-    .segment-box h4 {
-        margin: 0;
-        color: #1a4731;
-        font-size: 1rem;
-        font-weight: 600;
-    }
-
-    .segment-box p {
-        margin: 0.3rem 0 0 0;
-        color: #718096;
-        font-size: 0.85rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+aplicar_tema()
 
 
 # =============================================================================
 # FUNCIONES AUXILIARES
 # =============================================================================
 
-def obtener_metadata():
-    """Obtiene información sobre la actualización de datos."""
-    metadata_path = Path(__file__).parent / 'master_data' / 'metadata.json'
-    if metadata_path.exists():
-        with open(metadata_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return None
+def _anios_de_historia(metadata: dict) -> int:
+    """Calcula los años de historia a partir de fecha_min/fecha_max."""
+    try:
+        f_min = datetime.fromisoformat(metadata["fecha_min"])
+        f_max = datetime.fromisoformat(metadata["fecha_max"])
+        return f_max.year - f_min.year + 1
+    except (KeyError, ValueError, TypeError):
+        meses = metadata.get("meses", 0)
+        return max(1, round(meses / 12)) if meses else 0
 
 
 # =============================================================================
@@ -195,358 +73,393 @@ def obtener_metadata():
 # =============================================================================
 
 def main():
-    # Header con gradiente verde (distinto al azul de bancos)
-    st.markdown("""
-        <div class="main-header">
-            <h1>🏦 Radar Cooperativo Ecuador</h1>
-            <p>Análisis Financiero del Sistema Cooperativo | Datos oficiales SEPS (2018-2026)</p>
-        </div>
-    """, unsafe_allow_html=True)
+    # `cargar_metadata()` es la misma lectura de master_data/metadata.json que
+    # usan todas las demás páginas, pero cacheada (`st.cache_data`): reutilizarla
+    # evita releer el JSON en cada rerun del home.
+    metadata = cargar_metadata()
 
-    # KPIs dinámicos
-    metadata = obtener_metadata()
+    render_sidebar(metadata)
 
-    col1, col2, col3, col4 = st.columns(4)
+    # Header institucional (marca + estado del sistema)
+    render_header(metadata, estado="ok")
 
-    cooperativas = metadata.get('cooperativas', 259) if metadata else 259
-    meses = metadata.get('meses', 96) if metadata else 96
+    # ------------------------------------------------------------------ KPIs
+    cooperativas = metadata.get("cooperativas", 0)
+    meses = metadata.get("meses", 0)
+    anios = _anios_de_historia(metadata)
+    registros = metadata.get("registros_totales", 0)
+    cuentas = metadata.get("cuentas", 0)
 
-    with col1:
-        st.markdown(f"""
-        <div class="info-box">
-            <h4>COOPERATIVAS</h4>
-            <p>{cooperativas}</p>
-        </div>
-        """, unsafe_allow_html=True)
+    # "Datos al" se deriva del último período realmente presente en los
+    # agregados, no del JSON de metadata: si el ETL incorpora un mes nuevo y el
+    # metadata quedara desactualizado, el home seguiría mostrando el período
+    # correcto. El metadata solo actúa como respaldo.
+    fecha_max_str = "—"
+    ultima_fecha = obtener_ultima_fecha()
+    if ultima_fecha is not None:
+        fecha_max_str = pd.Timestamp(ultima_fecha).strftime("%b %Y").title()
+    elif metadata.get("fecha_max"):
+        try:
+            fecha_max_str = datetime.fromisoformat(metadata["fecha_max"]).strftime("%b %Y").title()
+        except (ValueError, TypeError):
+            pass
 
-    with col2:
-        st.markdown("""
-        <div class="info-box">
-            <h4>AÑOS DE HISTORIA</h4>
-            <p>8</p>
-        </div>
-        """, unsafe_allow_html=True)
+    kpis = [
+        ("Instituciones", f"{cooperativas}", "sps-kpi"),
+        ("Años de historia", f"{anios}", "sps-kpi sps-kpi--petrol"),
+        ("Meses de datos", f"{meses}", "sps-kpi sps-kpi--petrol"),
+        ("Cuentas contables", f"{cuentas:,}", "sps-kpi sps-kpi--green"),
+        ("Datos al", fecha_max_str, "sps-kpi sps-kpi--amber"),
+    ]
 
-    with col3:
-        st.markdown(f"""
-        <div class="info-box">
-            <h4>MESES DE DATOS</h4>
-            <p>{meses}</p>
-        </div>
-        """, unsafe_allow_html=True)
+    cols = st.columns(len(kpis))
+    for col, (label, valor, clase) in zip(cols, kpis):
+        with col:
+            st.markdown(
+                f"""
+                <div class="{clase}">
+                    <div class="sps-kpi__label">{label}</div>
+                    <div class="sps-kpi__value">{valor}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-    with col4:
-        if metadata and 'fecha_max' in metadata:
-            from datetime import datetime
-            try:
-                fecha = datetime.fromisoformat(metadata['fecha_max'])
-                fecha_str = fecha.strftime('%b %Y').title()
-            except Exception:
-                fecha_str = "Dic 2025"
+    # ------------------------------------------------------------ Introducción
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        Plataforma institucional de **inteligencia de riesgos** para el monitoreo integral
+        del Sector Financiero Popular y Solidario del Ecuador, con datos oficiales de la
+        **Superintendencia de Economía Popular y Solidaria (SEPS)**. Utilice el menú lateral
+        para navegar entre los módulos analíticos.
+        """
+    )
+    st.markdown("---")
+
+    # ==========================================================================
+    # EXECUTIVE DASHBOARD: KPIs FINANCIEROS + SPARKLINES + GAUGE + RESUMEN
+    # ==========================================================================
+
+    st.markdown('<div class="sps-section-title">Indicadores Financieros del Sistema</div>', unsafe_allow_html=True)
+
+    # Filtro Global de Segmento (ui/filtros.py): mismo componente y misma
+    # key de session_state que usan las demás páginas, de modo que el
+    # segmento elegido aquí sigue activo al navegar a Panorama, CAMEL, etc.
+    st.sidebar.markdown("### Filtros")
+    segmento_home = render_filtro_segmento()
+    if segmento_home != "Todos":
+        st.caption(f"Indicadores filtrados por **{segmento_home}**.")
+
+    series_financieras = {
+        "Activos Totales": ("1", "sps-kpi"),
+        "Cartera de Créditos": ("14", "sps-kpi sps-kpi--petrol"),
+        "Depósitos del Público": ("21", "sps-kpi sps-kpi--green"),
+        "Patrimonio": ("3", "sps-kpi sps-kpi--amber"),
+    }
+
+    resultados_financieros = {}
+    # Las series se guardan al obtenerlas para reutilizarlas más abajo en el
+    # gauge de intermediación, en vez de volver a pedir las de cartera (14) y
+    # depósitos (21) por separado.
+    series_obtenidas = {}
+    cols_fin = st.columns(4)
+    for col, (nombre, (codigo, clase)) in zip(cols_fin, series_financieras.items()):
+        serie = obtener_serie_sistema(codigo, segmento_home)
+        series_obtenidas[codigo] = serie
+        with col:
+            if serie.empty:
+                st.markdown(
+                    f'<div class="{clase}"><div class="sps-kpi__label">{nombre}</div>'
+                    f'<div class="sps-kpi__value">—</div></div>',
+                    unsafe_allow_html=True,
+                )
+                continue
+
+            valor_actual = serie["valor_total"].iloc[-1]
+            valor_anterior = serie["valor_total"].iloc[-13] if len(serie) > 12 else None
+            delta = (
+                ((valor_actual - valor_anterior) / valor_anterior * 100)
+                if valor_anterior and valor_anterior > 0 else None
+            )
+            resultados_financieros[nombre] = delta
+
+            delta_html = ""
+            if delta is not None:
+                signo = "+" if delta >= 0 else ""
+                clase_delta = "sps-kpi__delta--up" if delta >= 0 else "sps-kpi__delta--down"
+                delta_html = f'<div class="sps-kpi__delta {clase_delta}">{signo}{delta:.1f}% interanual</div>'
+
+            st.markdown(
+                f"""
+                <div class="{clase}">
+                    <div class="sps-kpi__label">{nombre}</div>
+                    <div class="sps-kpi__value">${valor_actual / 1_000_000:,.0f}M</div>
+                    {delta_html}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            ultimos_24m = serie["valor_total"].tail(24).tolist()
+            color_spark = {
+                "Activos Totales": COLORES["primario"],
+                "Cartera de Créditos": COLORES["secundario"],
+                "Depósitos del Público": COLORES["exito"],
+                "Patrimonio": COLORES["advertencia"],
+            }[nombre]
+            st.plotly_chart(
+                crear_sparkline(ultimos_24m, color=color_spark),
+                width="stretch",
+                config={"displayModeBar": False},
+            )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_gauge, col_resumen = st.columns([1, 2])
+
+    serie_cartera_g = series_obtenidas.get("14", pd.DataFrame())
+    serie_depositos_g = series_obtenidas.get("21", pd.DataFrame())
+
+    with col_gauge:
+        if not serie_cartera_g.empty and not serie_depositos_g.empty:
+            cartera_actual = serie_cartera_g["valor_total"].iloc[-1]
+            depositos_actual = serie_depositos_g["valor_total"].iloc[-1]
+            indice_intermediacion = (
+                (cartera_actual / depositos_actual * 100) if depositos_actual > 0 else 0
+            )
+            st.plotly_chart(
+                crear_gauge(
+                    indice_intermediacion,
+                    titulo="Índice de Intermediación Referencial (Cartera / Depósitos)",
+                    rango=(0, 150),
+                ),
+                width="stretch",
+                config={"displayModeBar": False},
+            )
         else:
-            fecha_str = "Dic 2025"
-        st.markdown(f"""
-        <div class="info-box">
-            <h4>DATOS AL</h4>
-            <p>{fecha_str}</p>
-        </div>
-        """, unsafe_allow_html=True)
+            st.info("Sin datos suficientes para el índice de intermediación.")
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    with col_resumen:
+        st.markdown('<div class="sps-section-title">Resumen Ejecutivo Automático</div>', unsafe_allow_html=True)
+        puntos = []
+        for nombre, delta in resultados_financieros.items():
+            if delta is None:
+                continue
+            direccion = "creció" if delta >= 0 else "se contrajo"
+            puntos.append(f"- **{nombre}** {direccion} **{abs(delta):.1f}%** interanual.")
 
-    # Introducción
-    st.markdown("""
-    ### Bienvenido al Radar Cooperativo
-
-    Esta plataforma permite explorar y analizar el sistema cooperativo de ahorro y crédito del Ecuador
-    con datos oficiales de la **Superintendencia de Economía Popular y Solidaria (SEPS)**.
-    Utiliza el menú lateral para navegar entre los diferentes módulos de análisis.
-    """)
-
-    st.markdown("---")
-
-    # =========================================================================
-    # MODULOS DE ANALISIS
-    # =========================================================================
-
-    st.markdown("### Módulos de Análisis")
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # MODULO 1: PANORAMA
-    st.markdown("""
-    <div class="card">
-        <h3 style="color: #276749; margin-bottom: 0.5rem;">📊 1. Panorama del Sistema</h3>
-        <p style="color: #4a5568; margin-bottom: 1rem; font-size: 0.95rem;">
-            Vista consolidada del sistema cooperativo con indicadores clave de mercado y concentración.
-        </p>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">KPIs del Sistema</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Activos totales, cartera, depósitos, patrimonio y número de cooperativas</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Mapa de Mercado</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Treemaps jerárquicos interactivos de activos y pasivos con drill-down</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Rankings</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Top cooperativas por activos y pasivos con participación de mercado</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Crecimiento YoY</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Variación anual de cartera y depósitos por cooperativa</p>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # MODULO 2: BALANCE GENERAL
-    st.markdown("""
-    <div class="card">
-        <h3 style="color: #276749; margin-bottom: 0.5rem;">⚖️ 2. Balance General</h3>
-        <p style="color: #4a5568; margin-bottom: 1rem; font-size: 0.95rem;">
-            Análisis temporal detallado del balance con navegación jerárquica de cuentas contables.
-        </p>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Evolución Comparativa</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Series temporales multi-cooperativa con comparación directa</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Filtros Jerárquicos</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Navegación por categoría, grupo, subcuenta y detalle contable</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Heatmap YoY</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Matriz cooperativa x mes mostrando crecimiento vs año anterior</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Ranking por Cuenta</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Comparación de cooperativas para un mes y cuenta específicos</p>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # MODULO 3: PERDIDAS Y GANANCIAS
-    st.markdown("""
-    <div class="card">
-        <h3 style="color: #276749; margin-bottom: 0.5rem;">💰 3. Pérdidas y Ganancias</h3>
-        <p style="color: #4a5568; margin-bottom: 1rem; font-size: 0.95rem;">
-            Análisis de rentabilidad y resultados con valores anualizados (suma móvil 12 meses).
-        </p>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Evolución Comparativa</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Comparación multi-cooperativa de ingresos y gastos anualizados</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Modos de Visualización</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Valores absolutos (millones USD), indexado (base 100) y participación (%)</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Ranking por Cuenta</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Clasificación de cooperativas por cuenta y estadísticas del sistema</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">Cuentas Jerárquicas</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Selector de 4-Gastos y 5-Ingresos con subcuentas detalladas</p>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # MODULO 4: CAMEL
-    st.markdown("""
-    <div class="card">
-        <h3 style="color: #276749; margin-bottom: 0.5rem;">📈 4. Indicadores CAMEL</h3>
-        <p style="color: #4a5568; margin-bottom: 1rem; font-size: 0.95rem;">
-            37 indicadores financieros oficiales de la SEPS en 7 categorías, extraídos de tablas dinámicas.
-        </p>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">C - Capital</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Capitalización, FK, FI y vulnerabilidad patrimonial</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">A - Activos</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Morosidad y cobertura por tipo de cartera, calidad de activos</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">M - Management / E - Earnings</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Eficiencia operativa, ROE, ROA, intermediación y rendimientos</p>
-            </div>
-            <div>
-                <p style="margin: 0; font-weight: 600; color: #1a4731; font-size: 0.9rem;">L - Liquidez</p>
-                <p style="margin: 0.25rem 0 0 0; color: #718096; font-size: 0.85rem;">Ranking, evolución temporal y heatmaps mensuales con escalas de colores</p>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        if puntos:
+            st.markdown("\n".join(puntos))
+            st.caption(
+                "Resumen generado automáticamente a partir de los agregados del sistema "
+                "(variación interanual, mismo mes del año anterior). No sustituye el "
+                "análisis detallado disponible en cada módulo."
+            )
+        else:
+            st.info("No hay suficiente historia (12 meses) para calcular variaciones interanuales.")
 
     st.markdown("---")
 
-    # =========================================================================
-    # ACCESO RAPIDO
-    # =========================================================================
+    # ------------------------------------------------------------- Módulos
+    st.markdown('<div class="sps-section-title">Módulos de análisis</div>', unsafe_allow_html=True)
 
-    st.markdown("### Acceso Rápido")
-    st.markdown("<br>", unsafe_allow_html=True)
+    modulos = [
+        ("📊", "Panorama del Sistema",
+         "Vista consolidada con KPIs de mercado, treemaps de activos y pasivos, "
+         "rankings y crecimiento interanual por institución."),
+        ("⚖️", "Balance General",
+         "Análisis temporal del balance con navegación jerárquica de cuentas, "
+         "evolución comparativa y heatmaps de variación interanual."),
+        ("💰", "Pérdidas y Ganancias",
+         "Rentabilidad y resultados con valores anualizados (suma móvil 12 meses), "
+         "modos absoluto/indexado/participación y ranking por cuenta."),
+        ("📈", "Indicadores CAMEL",
+         "37 indicadores financieros oficiales de la SEPS en 7 categorías, con ranking, "
+         "evolución temporal y heatmaps mensuales calibrados por percentiles."),
+    ]
 
+    fila1 = st.columns(2)
+    fila2 = st.columns(2)
+    for col, (icono, titulo, desc) in zip(fila1 + fila2, modulos):
+        with col:
+            st.markdown(
+                f"""
+                <div class="sps-card">
+                    <h3>{icono}&nbsp;&nbsp;{titulo}</h3>
+                    <p>{desc}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown("<div style='height:0.9rem'></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ------------------------------------------------------- Módulos de Riesgo
+    st.markdown('<div class="sps-section-title">Módulos de Riesgo</div>', unsafe_allow_html=True)
+
+    modulos_riesgo = [
+        ("💧", "Riesgo de Liquidez",
+         "Indicador oficial LIQ, liquidez ampliada calculada, distribución y simulador de estrés de retiro."),
+        ("🧾", "Riesgo de Crédito",
+         "Morosidad y cobertura oficiales por tipo de cartera, cartera vencida, provisiones y heatmap mensual."),
+        ("🏛️", "Riesgo de Solvencia",
+         "Capitalización, patrimonio/activos y vulnerabilidad patrimonial (FK, FI, CAP_NETO)."),
+        ("🧩", "Riesgo de Concentración",
+         "HHI, CR5/CR10, curva de Lorenz y coeficiente de Gini sobre activos, cartera y depósitos."),
+        ("🕸️", "Riesgo Sistémico",
+         "Índice de Importancia Sistémica por tamaño y sustituibilidad de mercado."),
+        ("🧮", "CAMEL — Score Compuesto",
+         "Score 0-100 por institución (percentiles C-A-M-E-L), radar y heatmap comparativo."),
+        ("🚨", "Alertas Tempranas",
+         "Motor de reglas con semáforo agregado y ranking de deterioro institucional."),
+    ]
+
+    filas_riesgo = [st.columns(4), st.columns(3)]
+    celdas_riesgo = filas_riesgo[0] + filas_riesgo[1]
+    for col, (icono, titulo, desc) in zip(celdas_riesgo, modulos_riesgo):
+        with col:
+            st.markdown(
+                f"""
+                <div class="sps-card">
+                    <h3 style="font-size:0.95rem;">{icono}&nbsp;&nbsp;{titulo}</h3>
+                    <p style="font-size:0.82rem;">{desc}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown("<div style='height:0.7rem'></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ------------------------------------------------------- Analítica Avanzada
+    st.markdown('<div class="sps-section-title">Analítica Avanzada</div>', unsafe_allow_html=True)
+
+    modulos_avanzados = [
+        ("🧪", "Stress Testing / Escenarios",
+         "Prueba de resistencia con shocks de liquidez y deterioro crediticio (Base, Moderado, Severo, Extremo)."),
+        ("📉", "Modelos Predictivos",
+         "Forecast ARIMA de series del sistema y predicción de morosidad a un mes (Random Forest), con métricas de validación reales."),
+        ("🤖", "Machine Learning",
+         "Detección de anomalías (Isolation Forest) y segmentación de riesgo (KMeans), entrenados en tiempo real."),
+        ("🧠", "Asistente Inteligente",
+         "Chat institucional anclado a datos reales, con integración opcional a Claude (Anthropic)."),
+    ]
+
+    fila_avanzada = st.columns(4)
+    for col, (icono, titulo, desc) in zip(fila_avanzada, modulos_avanzados):
+        with col:
+            st.markdown(
+                f"""
+                <div class="sps-card">
+                    <h3 style="font-size:0.95rem;">{icono}&nbsp;&nbsp;{titulo}</h3>
+                    <p style="font-size:0.82rem;">{desc}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown("<div style='height:0.7rem'></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # -------------------------------------------------------- Acceso rápido
+    st.markdown('<div class="sps-section-title">Acceso rápido</div>', unsafe_allow_html=True)
     col_a, col_b, col_c, col_d = st.columns(4)
-
     with col_a:
-        st.page_link("pages/1_Panorama.py", label="📊 Panorama", width='stretch')
-
+        st.page_link("pages/1_Panorama.py", label="Panorama", icon="📊", width="stretch")
     with col_b:
-        st.page_link("pages/2_Balance_General.py", label="⚖️ Balance General", width='stretch')
-
+        st.page_link("pages/2_Balance_General.py", label="Balance General", icon="⚖️", width="stretch")
     with col_c:
-        st.page_link("pages/3_Perdidas_Ganancias.py", label="💰 Pérdidas y Ganancias", width='stretch')
-
+        st.page_link("pages/3_Perdidas_Ganancias.py", label="Pérdidas y Ganancias", icon="💰", width="stretch")
     with col_d:
-        st.page_link("pages/4_CAMEL.py", label="📈 Indicadores CAMEL", width='stretch')
+        st.page_link("pages/4_CAMEL.py", label="Indicadores CAMEL", icon="📈", width="stretch")
+
+    col_e, col_f, col_g, col_h = st.columns(4)
+    with col_e:
+        st.page_link("pages/5_Riesgo_Liquidez.py", label="Riesgo de Liquidez", icon="💧", width="stretch")
+    with col_f:
+        st.page_link("pages/6_Riesgo_Credito.py", label="Riesgo de Crédito", icon="🧾", width="stretch")
+    with col_g:
+        st.page_link("pages/7_Riesgo_Solvencia.py", label="Riesgo de Solvencia", icon="🏛️", width="stretch")
+    with col_h:
+        st.page_link("pages/8_Riesgo_Concentracion.py", label="Riesgo de Concentración", icon="🧩", width="stretch")
+
+    col_i, col_j, col_k, col_l = st.columns(4)
+    with col_i:
+        st.page_link("pages/9_Riesgo_Sistemico.py", label="Riesgo Sistémico", icon="🕸️", width="stretch")
+    with col_j:
+        st.page_link("pages/10_CAMEL_Score.py", label="CAMEL Score", icon="🧮", width="stretch")
+    with col_k:
+        st.page_link("pages/11_Alertas_Tempranas.py", label="Alertas Tempranas", icon="🚨", width="stretch")
+    with col_l:
+        st.page_link("pages/12_Stress_Testing.py", label="Stress Testing", icon="🧪", width="stretch")
+
+    col_m, col_n, col_o = st.columns(3)
+    with col_m:
+        st.page_link("pages/13_Modelos_Predictivos.py", label="Modelos Predictivos", icon="📉", width="stretch")
+    with col_n:
+        st.page_link("pages/14_Machine_Learning.py", label="Machine Learning", icon="🤖", width="stretch")
+    with col_o:
+        st.page_link("pages/15_Asistente_IA.py", label="Asistente Inteligente", icon="🧠", width="stretch")
 
     st.markdown("---")
 
-    # =========================================================================
-    # SEGMENTOS
-    # =========================================================================
-
-    st.markdown("### Segmentos del Sistema Cooperativo")
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-
-    with col_s1:
-        st.markdown("""
-        <div class="segment-box">
-            <h4>Segmento 1</h4>
-            <p>Activos > $80 millones</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col_s2:
-        st.markdown("""
-        <div class="segment-box">
-            <h4>Segmento 2</h4>
-            <p>Activos $20 - $80 millones</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col_s3:
-        st.markdown("""
-        <div class="segment-box">
-            <h4>Segmento 3</h4>
-            <p>Activos $5 - $20 millones</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col_s4:
-        st.markdown("""
-        <div class="segment-box">
-            <h4>Mutualistas</h4>
-            <p>Segmento 1 Mutualista</p>
-        </div>
-        """, unsafe_allow_html=True)
+    # --------------------------------------------------------- Segmentos
+    st.markdown('<div class="sps-section-title">Segmentos del sector</div>', unsafe_allow_html=True)
+    segmentos = [
+        ("Segmento 1", "Activos > $80 millones"),
+        ("Segmento 2", "Activos $20 – $80 millones"),
+        ("Segmento 3", "Activos $5 – $20 millones"),
+        ("Mutualistas", "Segmento 1 Mutualista"),
+    ]
+    for col, (nombre, desc) in zip(st.columns(4), segmentos):
+        with col:
+            st.markdown(
+                f"""
+                <div class="sps-segment">
+                    <h4>{nombre}</h4>
+                    <p>{desc}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     st.markdown("---")
 
-    # =========================================================================
-    # CROSS-PROMO: RADAR BANCARIO
-    # =========================================================================
-
-    st.markdown("""
-    <div style="
-        background: linear-gradient(135deg, #1a365d 0%, #2c5282 50%, #3182ce 100%);
-        border-radius: 16px;
-        padding: 2rem;
-        margin: 1rem 0;
-        box-shadow: 0 10px 40px rgba(26, 54, 93, 0.3);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: 1rem;
-    ">
-        <div style="flex: 1; min-width: 280px;">
-            <h3 style="color: white; margin: 0 0 0.5rem 0; font-size: 1.4rem;">
-                🏛️ Conoce también el Radar del Sistema Bancario
-            </h3>
-            <p style="color: rgba(255,255,255,0.85); margin: 0; font-size: 0.95rem;">
-                Explora el análisis financiero completo de los bancos privados del Ecuador:
-                Balance General, Pérdidas y Ganancias, Series Temporales, Rentabilidad e Indicadores CAMEL.
-            </p>
-        </div>
-        <div style="flex-shrink: 0;">
-            <a href="https://bancos-dqebh5jqc3r5scsjrlwfxp.streamlit.app/Balance_General"
-               target="_blank"
-               style="
-                   background: white;
-                   color: #1a365d;
-                   padding: 0.75rem 1.5rem;
-                   border-radius: 10px;
-                   text-decoration: none;
-                   font-weight: 600;
-                   font-size: 0.95rem;
-                   display: inline-block;
-                   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-               ">
-                Visitar Radar Bancario →
-            </a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # ------------------------------------------------------- Info del sistema
+    st.markdown('<div class="sps-section-title">Información del sistema</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        - **Fuente de datos:** Superintendencia de Economía Popular y Solidaria (SEPS)
+        - **Período cubierto:** {metadata.get('fecha_min', '—')[:7]} a {fecha_max_str} · {meses} meses
+        - **Instituciones:** {cooperativas} (Segmentos 1, 2, 3 y Mutualistas)
+        - **Registros de balance procesados:** {registros:,}
+        - **Formato:** Archivos Parquet optimizados con agregados pre-calculados para consultas eficientes
+        """
+    )
 
     st.markdown("---")
 
-    # =========================================================================
-    # INFO Y FOOTER
-    # =========================================================================
-
-    st.markdown("""
-    ### Información del Sistema
-
-    **Fuente de Datos:** Superintendencia de Economía Popular y Solidaria (SEPS)
-    **Período Cubierto:** Enero 2018 - Diciembre 2025 (96 meses)
-    **Instituciones:** 259 cooperativas + 4 mutualistas (Segmentos 1, 2 y 3)
-    **Formato:** Archivos Parquet optimizados (~22.7 millones de registros de balance)
-
-    Los datos son procesados con normalización de nombres y validaciones de calidad
-    para garantizar consistencia y consultas eficientes.
-    """)
-
-    st.markdown("---")
-
+    # ------------------------------------------------------------- Footer
     col_f1, col_f2 = st.columns([2, 1])
-
     with col_f1:
         st.markdown(
             """
-            <div style='color: #718096; font-size: 0.85rem;'>
-                <p><strong>Tecnologías:</strong> Python 3.8+, Streamlit, Plotly, Pandas, NumPy<br>
-                <strong>Fuente de datos:</strong> Superintendencia de Economía Popular y Solidaria<br>
-                <strong>Versión:</strong> 1.0.0</p>
+            <div style='color: var(--sps-text-dim); font-size: 0.82rem;'>
+                <strong>Tecnologías:</strong> Python, Streamlit, Plotly, Pandas, PyArrow<br>
+                <strong>Fuente:</strong> Superintendencia de Economía Popular y Solidaria (SEPS)
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
-
     with col_f2:
         st.markdown(
             """
-            <div style='text-align: right; color: #718096; font-size: 0.85rem;'>
-                <p><strong>Desarrollado por</strong><br>Eco. Cristian Coronel Quezada, MBA<br><strong>DATAMETRICS</strong></p>
-                <p style='font-size:0.75rem; color:#a0aec0; margin-top:0.25rem;'>Mejora sobre el proyecto base de<br><a href='https://github.com/jp1309/cooperativas' target='_blank' style='color:#a0aec0;'>Juan Pablo Erráez T.</a></p>
+            <div style='text-align: right; color: var(--sps-text-dim); font-size: 0.82rem;'>
+                <strong>CEO · DATAMETRICS</strong><br>
+                Eco. Cristian Coronel Quezada MBA
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
 

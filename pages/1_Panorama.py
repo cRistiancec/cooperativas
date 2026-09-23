@@ -15,20 +15,27 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.data_loader import (
     obtener_fechas_disponibles_rapido,
-    obtener_segmentos_disponibles_rapido,
     obtener_metricas_kpi,
     obtener_ranking_rapido,
     obtener_datos_treemap_rapido,
     obtener_datos_treemap_pasivos_rapido,
     obtener_crecimiento_anual,
+    cargar_entidades,
+    cargar_indicadores,
+    cargar_ranking_cooperativas,
 )
+from analytics.financial_engine import reporte_calidad_fecha
 from utils.charts import (
     render_kpi_card,
     crear_ranking_barras,
     crear_treemap,
+    altura_por_categorias,
+    truncar_nombres_unicos,
     COLORES,
 )
 from config.indicator_mapping import CODIGOS_BALANCE
+from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from utils.data_loader import cargar_metadata
 
 # =============================================================================
 # FUNCIONES CACHEADAS DE GRAFICOS
@@ -51,9 +58,11 @@ def _crear_ranking_cached(ranking, x_col, y_col, formato_valor, altura):
 @st.cache_data(ttl=3600)
 def _crear_crecimiento_cached(df_crec, titulo):
     """Cachea la creación del gráfico de crecimiento."""
+    nombres_completos = [str(c) for c in df_crec['cooperativa']]
+
     fig = go.Figure(go.Bar(
         x=df_crec['crecimiento'],
-        y=df_crec['cooperativa'],
+        y=truncar_nombres_unicos(nombres_completos),
         orientation='h',
         marker=dict(
             color=df_crec['crecimiento'],
@@ -62,16 +71,20 @@ def _crear_crecimiento_cached(df_crec, titulo):
             cmax=30,
         ),
         text=df_crec['crecimiento'].apply(lambda x: f"{x:.1f}%"),
-        textposition='outside'
+        textposition='outside',
+        cliponaxis=False,
+        customdata=nombres_completos,
+        hovertemplate="<b>%{customdata}</b><br>Crecimiento: %{x:.1f}%<extra></extra>",
     ))
 
     fig.update_layout(
         title=titulo,
-        height=max(400, len(df_crec) * 22),
+        height=altura_por_categorias(len(df_crec)),
         xaxis_title="Crecimiento (%)",
         yaxis_title="",
+        yaxis=dict(tickfont=dict(size=10), automargin=True),
         showlegend=False,
-        margin=dict(l=10, r=10, t=40, b=10)
+        margin=dict(l=10, r=60, t=40, b=10)
     )
     fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=1)
 
@@ -83,16 +96,20 @@ def _crear_crecimiento_cached(df_crec, titulo):
 # =============================================================================
 
 st.set_page_config(
-    page_title="Panorama | Radar Cooperativo",
+    page_title="Panorama | Radar Cooperativo Ecuador",
     page_icon="📊",
     layout="wide",
 )
+
+aplicar_tema()
 
 # =============================================================================
 # PAGINA PRINCIPAL
 # =============================================================================
 
 def main():
+    render_sidebar(cargar_metadata())
+
     st.title("📊 Panorama del Sistema Cooperativo")
     st.markdown("Visión general del sistema cooperativo de ahorro y crédito del Ecuador.")
 
@@ -106,20 +123,16 @@ def main():
     # Sidebar - Filtros
     st.sidebar.markdown("### Filtros")
 
-    # Selector de segmento
-    segmentos = ["Todos"] + obtener_segmentos_disponibles_rapido()
-    segmento_seleccionado = st.sidebar.selectbox(
-        "Segmento",
-        options=segmentos,
-        index=0
-    )
+    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
+    segmento_seleccionado = render_filtro_segmento()
 
     # Selector de fecha
     fecha_seleccionada = st.sidebar.selectbox(
         "Fecha de análisis",
         options=fechas,
         format_func=lambda x: pd.Timestamp(x).strftime('%B %Y').title(),
-        index=0
+        index=0,
+        key="fecha_panorama"
     )
 
     # Obtener fecha anterior (12 meses atrás)
@@ -224,7 +237,7 @@ def main():
         if not ranking.empty:
             fig_rank = _crear_ranking_cached(
                 ranking, x_col='valor_millones', y_col='cooperativa',
-                formato_valor="${:,.0f}M", altura=max(400, len(ranking) * 22)
+                formato_valor="${:,.0f}M", altura=altura_por_categorias(len(ranking))
             )
             st.plotly_chart(fig_rank, width='stretch')
 
@@ -262,7 +275,7 @@ def main():
         if not ranking_pasivos.empty:
             fig_rank_pas = _crear_ranking_cached(
                 ranking_pasivos, x_col='valor_millones', y_col='cooperativa',
-                formato_valor="${:,.0f}M", altura=max(400, len(ranking_pasivos) * 22)
+                formato_valor="${:,.0f}M", altura=altura_por_categorias(len(ranking_pasivos))
             )
             st.plotly_chart(fig_rank_pas, width='stretch')
 
@@ -315,6 +328,61 @@ def main():
                 st.info("Sin datos de crecimiento disponibles.")
         else:
             st.info("No hay datos del año anterior para comparar.")
+
+    st.markdown("---")
+
+    # ==========================================================================
+    # SECCION 4: CALIDAD DE DATOS E IDENTIDAD DE ENTIDADES
+    # ==========================================================================
+
+    with st.expander("🔍 Calidad de datos e identidad de entidades (para esta fecha)"):
+        df_ind, _ = cargar_indicadores()
+        df_ranking = cargar_ranking_cooperativas()
+        if df_ind.empty or df_ranking.empty:
+            st.info("Sin datos suficientes para el reporte de calidad.")
+        else:
+            reporte = reporte_calidad_fecha(df_ind, df_ranking, fecha_seleccionada)
+            if reporte["confiable"]:
+                st.success("Sin anomalías de calidad de datos detectadas para esta fecha.")
+            else:
+                st.warning(
+                    "Se detectaron anomalías de calidad de datos — revisar antes de interpretar "
+                    "alertas o rankings de esta fecha como señal financiera:"
+                )
+                for razon in reporte["razones"]:
+                    st.markdown(f"- {razon}")
+            st.caption(
+                "Esta verificación distingue una anomalía de datos (fecha faltante, duplicado, "
+                "denominador en cero) de una señal financiera real — ver docs/RIESGO_METODOLOGIA.md."
+            )
+
+        st.markdown("##### Identidad de entidades")
+        df_entidades = cargar_entidades()
+        if df_entidades.empty:
+            st.info(
+                "Tabla de identidad no generada. Ejecutar `python scripts/generar_entidades.py`."
+            )
+        else:
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("Entidades registradas", len(df_entidades))
+            with c2:
+                st.metric("Con RUC identificado", int(df_entidades["ruc"].notna().sum()))
+            with c3:
+                st.metric("Posible salida / liquidación",
+                          int((df_entidades["estado"] != "activa").sum()))
+            st.dataframe(
+                df_entidades[df_entidades["estado"] != "activa"][
+                    ["nombre", "segmento_actual", "estado", "fecha_fin_datos", "observaciones"]
+                ],
+                width="stretch", hide_index=True,
+            )
+            st.caption(
+                "RUC disponible solo para entidades cubiertas por el boletín SEPS de Patrimonio "
+                "Técnico (Segmento 1, Mutualistas, FINANCOOP). 'Posible salida' es un PROXY "
+                "(cese de reporte) — no confirma la causa (liquidación/fusión/absorción/atraso). "
+                "Ver `analytics/eventos.py` y `scripts/generar_entidades.py`."
+            )
 
 
 if __name__ == "__main__":

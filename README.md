@@ -1,18 +1,19 @@
-# Radar Cooperativo Ecuador
+# DATA METRICS
+### Business Intelligence and Analytics
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cooperativas-q73wpzj6f7.streamlit.app/)
+## Radar Cooperativo Ecuador
 
-> **Mejora sobre** el proyecto base [jp1309/cooperativas](https://github.com/jp1309/cooperativas) de Juan Pablo Erráez T. — nuevas funcionalidades, optimizaciones de rendimiento y branding DATAMETRICS.
+**Sistema Inteligente para el Monitoreo Integral del Sector Financiero Popular y Solidario**
 
-Dashboard interactivo de Business Intelligence para el sistema cooperativo de ahorro y crédito ecuatoriano, construido con Streamlit y Python.
+git pull origin main
 
-**Desarrollado por**: Eco. Cristian Coronel Quezada, MBA · **DATAMETRICS**
+**Autor institucional**: Eco. Cristian Coronel Quezada, MBA — CEO - DATAMETRICS
 
 ## Descripcion del Proyecto
 
-Sistema de visualizacion y analisis de datos financieros del sector cooperativo ecuatoriano, basado en informacion publica de la Superintendencia de Economia Popular y Solidaria (SEPS). Permite analisis temporal, comparativo y de indicadores CAMEL de las cooperativas de ahorro y credito.
+Plataforma de monitoreo y analisis de datos financieros del sector financiero popular y solidario ecuatoriano, basado en informacion publica de la Superintendencia de Economia Popular y Solidaria (SEPS). Permite analisis temporal, comparativo y de indicadores CAMEL de las cooperativas de ahorro y credito.
 
-El dashboard cuenta con 4 modulos principales: panorama del sistema, estructura de balance, analisis de resultados (PyG) y evaluacion CAMEL con indicadores oficiales de la Superintendencia.
+La plataforma cuenta actualmente con 4 modulos principales: panorama del sistema, estructura de balance, analisis de resultados (PyG) y evaluacion CAMEL con indicadores oficiales de la Superintendencia. Ver `PROYECTO/AUDITORIA_COMPLETA.md` y `CHANGELOG.md` para el plan y registro de la reconstruccion institucional en curso.
 
 ## Fuente de Datos
 
@@ -52,11 +53,18 @@ cooperativas/
 │   ├── 2_Balance_General.py              # Analisis temporal de balance
 │   ├── 3_Perdidas_Ganancias.py           # Estado de resultados (PyG)
 │   └── 4_CAMEL.py                        # Indicadores CAMEL oficiales
+├── ui/                                     # Capa de presentacion institucional
+│   ├── theme.py                          # Inyector de tema (dark COSEDE)
+│   ├── header.py                         # Header institucional
+│   └── sidebar.py                        # Sidebar premium (buscador, favoritos, estado)
+├── styles/                                 # Hojas de estilo modulares
+│   ├── theme.css / styles.css / responsive.css / animations.css
 ├── utils/                                 # Utilidades compartidas
 │   ├── data_loader.py                    # Carga y validacion de datos
 │   └── charts.py                         # Componentes de visualizacion
 ├── config/
-│   └── indicator_mapping.py              # Mapeo de codigos, colores, CAMEL
+│   ├── indicator_mapping.py              # Mapeo de codigos, colores, CAMEL
+│   └── constants.py                      # Constantes compartidas (meses, etc.)
 ├── scripts/                               # Scripts de procesamiento ETL
 │   ├── procesar_balance_cooperativas.py  # ZIPs CSV → balance.parquet
 │   ├── procesar_pyg.py                   # Desacumulacion + suma movil 12M
@@ -68,8 +76,11 @@ cooperativas/
 ├── indicadores/                           # ZIPs fuente indicadores (no en repo)
 ├── docs/
 │   └── CONTEXTO.md                       # Documentacion tecnica detallada
+├── PROYECTO/
+│   └── AUDITORIA_COMPLETA.md             # Auditoria integral y hoja de ruta
+├── CHANGELOG.md                           # Registro de la reconstruccion por fases
 ├── requirements.txt                       # Dependencias
-└── .streamlit/config.toml                # Configuracion de tema
+└── .streamlit/config.toml                # Configuracion de tema (dark)
 ```
 
 ## Modulos Implementados
@@ -194,8 +205,6 @@ Acceder en: http://localhost:8502
 
 La aplicacion esta desplegada en Streamlit Cloud y se actualiza automaticamente con cada push a `main`.
 
-- **Aplicación**: [cooperativas-q73wpzj6f7.streamlit.app](https://cooperativas-q73wpzj6f7.streamlit.app/)
-- **Repositorio**: [cRistiancec/cooperativas](https://github.com/cRistiancec/cooperativas)
 - **Archivo principal**: `Inicio.py`
 - **Rama**: `main`
 
@@ -225,14 +234,10 @@ Cooperativas que cambiaron de segmento a lo largo del tiempo (70+) toman el segm
 - **PyArrow**: Lectura eficiente de archivos Parquet
 - **NumPy**: Operaciones numericas
 
-## Autor
+## Autor Institucional
 
-**Eco. Cristian Coronel Quezada, MBA**  
-DATAMETRICS — Business Intelligence and Analytics
-
-Desarrollado con asistencia de Claude AI (Anthropic).
-
-Mejora y extensión del proyecto base desarrollado por [Juan Pablo Erráez T.](https://github.com/jp1309/cooperativas).
+**Eco. Cristian Coronel Quezada, MBA**
+Coordinación Técnica de Riesgos y Estudios — COSEDE
 
 ---
 

@@ -35,6 +35,7 @@ except ImportError:
 BASE_DIR = Path(__file__).parent.parent
 BALANCES_DIR = BASE_DIR / "balances_cooperativas"
 INDICADORES_DIR = BASE_DIR / "indicadores"
+PATRIMONIO_DIR = BASE_DIR / "patrimonio_tecnico"
 MASTER_DATA_DIR = BASE_DIR / "master_data"
 METADATA_PATH = MASTER_DATA_DIR / "metadata.json"
 
@@ -63,13 +64,17 @@ def obtener_fecha_actual_datos() -> datetime | None:
     return datetime.fromisoformat(fecha_max.split("T")[0])
 
 
-def extraer_download_id(html: str, anio: int) -> str | None:
-    """Extrae el enlace anual únicamente del panel financiero mensual."""
+def extraer_download_id(html: str, anio: int, panel_texto: str = "estados financieros mensuales") -> str | None:
+    """
+    Extrae el enlace anual de un panel del portal SEPS, buscado por texto de
+    su encabezado `<h5>` (insensible a mayúsculas). Por defecto busca el panel
+    de "Estados Financieros Mensuales"; se reutiliza con otros textos (p. ej.
+    "patrimonio técnico") para otras fuentes publicadas en el mismo portal.
+    """
     soup = BeautifulSoup(html, "html.parser")
-    # Buscar el h5 "Estados Financieros Mensuales"
     seccion = None
     for h5 in soup.find_all("h5"):
-        if "estados financieros mensuales" in h5.get_text(strip=True).lower():
+        if panel_texto in h5.get_text(strip=True).lower():
             panel = h5.find_parent("div", class_="panel")
             seccion = panel if panel is not None else h5.parent
             break
@@ -91,23 +96,71 @@ def extraer_download_id(html: str, anio: int) -> str | None:
     return None
 
 
-def scrape_download_id(anio: int) -> str | None:
-    """Consulta el portal SEPS y obtiene el ID del ZIP financiero mensual."""
-    print(f"  Accediendo a {URL_SEPS} ...")
-    try:
-        resp = requests.get(URL_SEPS, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        print(f"  ERROR al acceder al portal SEPS: {e}")
-        return None
+def scrape_download_id(anio: int, panel_texto: str = "estados financieros mensuales",
+                        html: str | None = None) -> str | None:
+    """
+    Consulta el portal SEPS y obtiene el ID del ZIP de un panel dado.
+    Si se pasa `html` ya descargado (p. ej. para reutilizar una misma
+    respuesta del portal entre varias fuentes), evita un segundo fetch.
+    """
+    if html is None:
+        print(f"  Accediendo a {URL_SEPS} ...")
+        try:
+            resp = requests.get(URL_SEPS, headers=HEADERS, timeout=30)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            print(f"  ERROR al acceder al portal SEPS: {e}")
+            return None
+        html = resp.text
 
-    download_id = extraer_download_id(resp.text, anio)
+    download_id = extraer_download_id(html, anio, panel_texto)
     if download_id:
         print(f"  Encontrado: año {anio} -> download_id={download_id}")
         return download_id
 
-    print(f"  No se encontró enlace mensual de descarga para el año {anio}.")
+    print(f"  No se encontró enlace de descarga ('{panel_texto}') para el año {anio}.")
     return None
+
+
+def descargar_patrimonio_tecnico(anio: int) -> bool:
+    """
+    Descarga, de forma best-effort, el boletín de "Patrimonio Técnico" del
+    portal SEPS (fuente FS01 — indicadores oficiales de Solvencia, PTC, PTS,
+    APPR, PTR; cobertura: Segmento 1, Mutualistas y Caja Central FINANCOOP,
+    no Segmentos 2/3 — ver docs/RIESGO_METODOLOGIA.md §3.2).
+
+    Es una fuente **secundaria e independiente** del flujo principal de
+    Estados Financieros: cualquier fallo aquí se registra como advertencia y
+    NO afecta el código de salida del script (el pipeline de balance/CAMEL/PyG
+    debe seguir funcionando aunque este boletín cambie de estructura o no
+    esté disponible momentáneamente).
+
+    Devuelve True si descargó (o ya tenía) el ZIP del año vigente.
+    """
+    try:
+        PATRIMONIO_DIR.mkdir(exist_ok=True)
+        print(f"\n[Patrimonio Técnico] Buscando boletín de solvencia oficial para {anio}...")
+        download_id = scrape_download_id(anio, panel_texto="patrimonio técnico")
+        if download_id is None:
+            print("  [Patrimonio Técnico] No se encontró el panel en el portal. Se omite (no bloquea el pipeline).")
+            return False
+
+        destino = PATRIMONIO_DIR / f"{anio}-PAT.zip"
+        destino_temporal = PATRIMONIO_DIR / f".{anio}-PAT.zip.tmp"
+        destino_temporal.unlink(missing_ok=True)
+
+        ok = descargar_zip(download_id, destino_temporal)
+        if not ok:
+            print("  [Patrimonio Técnico] Descarga falló. Se omite (no bloquea el pipeline).")
+            destino_temporal.unlink(missing_ok=True)
+            return False
+
+        destino_temporal.replace(destino)
+        print(f"  [Patrimonio Técnico] Guardado: {destino}")
+        return True
+    except Exception as exc:  # noqa: BLE001 — best-effort: nunca debe tumbar el flujo principal
+        print(f"  [Patrimonio Técnico] ERROR inesperado (ignorado, no bloquea el pipeline): {exc}")
+        return False
 
 
 def descargar_zip(download_id: str, destino: Path) -> bool:
@@ -264,6 +317,10 @@ def main():
     shutil.copy2(destino_zip, destino_ind_temporal)
     destino_ind_temporal.replace(destino_ind)
     print(f"  Copia completada: {destino_ind.stat().st_size / 1024 / 1024:.1f} MB")
+
+    # Fuente secundaria best-effort: boletín de Patrimonio Técnico (Solvencia
+    # oficial FS01). No afecta el código de salida de este script.
+    descargar_patrimonio_tecnico(anio)
 
     print("\n" + "=" * 60)
     print(f"DESCARGA COMPLETADA: {nombre_zip}")

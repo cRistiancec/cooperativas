@@ -1,0 +1,27 @@
+{
+  "fecha_procesamiento": "2026-09-14T13:27:22.373468",
+  "archivos_procesados": [
+    "2020-PAT.zip",
+    "2021-PAT.zip",
+    "2022-PAT.zip",
+    "2023-PAT.zip",
+    "2024-PAT.zip",
+    "2025-PAT.zip",
+    "2026-PAT.zip"
+  ],
+  "registros_totales": 3548,
+  "ruc_unicos": 53,
+  "cooperativas_unicas": 53,
+  "grupos_fuente": [
+    "FINANCOOP",
+    "Mutualista",
+    "Segmento 1"
+  ],
+  "fecha_min": "2020-01-31T00:00:00",
+  "fecha_max": "2026-07-31T00:00:00",
+  "meses": 79,
+  "registros_con_discrepancia_solvencia_vs_ptc_appr": 0,
+  "cobertura": "Segmento 1, Mutualistas y Caja Central FINANCOOP únicamente. La SEPS no publica este indicador para Segmento 2/3 (ver docs/RIESGO_METODOLOGIA.md §3.2).",
+  "fuente": "Portal SEPS, panel 'Patrimonio técnico' (boletín Patrimonio Técnico por entidad)",
+  "umbral_regulatorio": "Solvencia >= 9% (Patrimonio Técnico Requerido, ficha SEPS 63)"
+}
