@@ -65,6 +65,12 @@ def generar_entidades():
 
     df_bal = df_bal.drop_duplicates(subset=["fecha", "cooperativa"])
 
+    # La dimensión es la fuente de verdad del segmento por mes: así
+    # `cambio_segmento_detectado` y `pct_segmento_historico_estimado` reflejan
+    # lo que dijo la SEPS en cada corte y no un backfill retroactivo.
+    from segmento_historico import acoplar_segmento  # noqa: E402 (mismo dir, scripts/)
+    df_bal, _ = acoplar_segmento(df_bal, "entidades")
+
     # --- Rango de fechas y segmento actual por entidad ---
     resumen = df_bal.groupby("cooperativa", observed=True).agg(
         fecha_inicio=("fecha", "min"),

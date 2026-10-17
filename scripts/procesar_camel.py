@@ -26,8 +26,10 @@ except ModuleNotFoundError:
 
 try:
     from io_atomico import guardar_parquet_atomico
+    from segmento_historico import acoplar_segmento
 except ModuleNotFoundError:
     from scripts.io_atomico import guardar_parquet_atomico
+    from scripts.segmento_historico import acoplar_segmento
 
 # Rutas
 INDICADORES_DIR = Path(__file__).parent.parent / "indicadores"
@@ -541,6 +543,8 @@ def procesar_todos_indicadores():
         df_completo['segmento_historico'].notna(), df_completo['segmento']
     )
     df_completo['segmento_historico_estimado'] = df_completo['segmento_historico_estimado'].fillna(True)
+    # Segmento point-in-time desde la dimensión única (misma fuente que balance y PyG).
+    df_completo, _rep_seg = acoplar_segmento(df_completo, 'camel')
 
     # Deduplicar
     df_completo = df_completo.drop_duplicates(

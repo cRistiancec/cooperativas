@@ -1,4 +1,5 @@
 """Pruebas de la ingesta del segmento histórico (point-in-time) desde los ZIP de la SEPS."""
+import json
 import tempfile
 import unittest
 import zipfile
@@ -131,6 +132,79 @@ class EtlExtremoAExtremoTests(unittest.TestCase):
             df = df.sort_values("fecha")
             self.assertEqual(df.segmento_historico.astype(str).tolist(), ["SEGMENTO 3", "SEGMENTO 2"])
             self.assertEqual(df.segmento_historico_estimado.tolist(), [False, False])
+
+
+class AcoplarYValidarTests(unittest.TestCase):
+    """acoplar_segmento (PyG/CAMEL/entidades), validar_segmentos y agregado histórico."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def _dim(self, filas, nombre="dim.parquet"):
+        d = pd.DataFrame(filas, columns=["cooperativa", "fecha", "segmento_historico"])
+        d["fecha"] = pd.to_datetime(d["fecha"]); d["fuente"] = "t"
+        d.to_parquet(self.dir / nombre); return self.dir / nombre
+
+    def test_acoplar_reporta_cobertura_y_discrepancias(self):
+        ruta = self._dim([("A", "2024-01-31", "SEGMENTO 2"), ("B", "2024-01-31", "SEGMENTO 3")])
+        df = pd.DataFrame({"cooperativa": ["A", "B", "C"], "fecha": pd.to_datetime(["2024-01-31"] * 3),
+                           "segmento": ["SEGMENTO 1"] * 3,
+                           "segmento_historico": ["SEGMENTO 2", "SEGMENTO 1", "SEGMENTO 1"],
+                           "segmento_historico_estimado": [False, False, True]})
+        out, rep = sh.acoplar_segmento(df, "t", ruta)
+        self.assertEqual(out.segmento_historico.astype(str).tolist(), ["SEGMENTO 2", "SEGMENTO 3", "SEGMENTO 1"])
+        self.assertEqual(out.segmento_historico_estimado.tolist(), [False, False, True])
+        self.assertEqual(rep["discrepancias_fuente"], 1)          # B: el archivo decía S1, la dimensión S3
+        self.assertAlmostEqual(rep["pct_cubierto"], 66.67, places=1)
+
+    def test_acoplar_sin_dimension_marca_estimado(self):
+        df = pd.DataFrame({"cooperativa": ["A"], "fecha": pd.to_datetime(["2024-01-31"]), "segmento": ["SEGMENTO 1"]})
+        out, rep = sh.acoplar_segmento(df, "t", self.dir / "no_existe.parquet")
+        self.assertTrue(out.segmento_historico_estimado.all()); self.assertEqual(rep["pct_cubierto"], 0.0)
+
+    def _datasets(self, estimado_ultimo=False, con_columnas=True):
+        f = pd.to_datetime(["2024-01-31", "2024-02-29"])
+        df = pd.DataFrame({"fecha": f, "cooperativa": ["A", "A"], "segmento": ["SEGMENTO 2"] * 2})
+        if con_columnas:
+            df["segmento_historico"] = ["SEGMENTO 3", "SEGMENTO 2"]
+            df["segmento_historico_estimado"] = [False, estimado_ultimo]
+        p = self.dir / "ds.parquet"; df.to_parquet(p)
+        return {"balance": p}
+
+    def test_validar_segmentos_ok(self):
+        from scripts.validar_actualizacion import validar_segmentos
+        dim = self._dim([("A", "2024-01-31", "SEGMENTO 3"), ("A", "2024-02-29", "SEGMENTO 2")])
+        validar_segmentos(pd.Timestamp("2024-02-29"), dim, self._datasets())
+
+    def test_validar_segmentos_falla_sin_dimension_con_hueco_o_estimado(self):
+        from scripts.validar_actualizacion import validar_segmentos
+        corte = pd.Timestamp("2024-02-29")
+        with self.assertRaises(ValueError):
+            validar_segmentos(corte, self.dir / "no.parquet", self._datasets())
+        hueco = self._dim([("A", "2023-12-31", "SEGMENTO 3"), ("A", "2024-02-29", "SEGMENTO 2")], "h.parquet")
+        with self.assertRaises(ValueError):
+            validar_segmentos(corte, hueco, self._datasets())
+        ok = self._dim([("A", "2024-01-31", "SEGMENTO 3"), ("A", "2024-02-29", "SEGMENTO 2")], "ok.parquet")
+        with self.assertRaises(ValueError):
+            validar_segmentos(corte, ok, self._datasets(estimado_ultimo=True))
+        with self.assertRaises(ValueError):
+            validar_segmentos(corte, ok, self._datasets(con_columnas=False))
+
+    def test_agregado_historico_separa_por_segmento_de_cada_mes(self):
+        from scripts import generar_agregados as ga
+        bal = pd.DataFrame({"fecha": pd.to_datetime(["2024-01-31", "2024-02-29"]),
+                            "segmento": ["SEGMENTO 2"] * 2, "cooperativa": ["A", "A"], "codigo": ["1", "1"],
+                            "cuenta": ["ACTIVO"] * 2, "valor": [10.0, 20.0],
+                            "segmento_historico": ["SEGMENTO 3", "SEGMENTO 2"],
+                            "segmento_historico_estimado": [False, False]})
+        bal.to_parquet(self.dir / "balance.parquet")
+        with mock.patch.object(ga, "MASTER_DATA_DIR", self.dir), mock.patch.object(ga, "BALANCE_PATH", self.dir / "balance.parquet"):
+            ga.main()
+        h = pd.read_parquet(self.dir / "agg_metricas_sistema_historico.parquet").sort_values("fecha")
+        self.assertEqual(h.segmento_historico.astype(str).tolist(), ["SEGMENTO 3", "SEGMENTO 2"])
+        meta = json.loads((self.dir / "metadata_agregados.json").read_text())
+        self.assertIn("agg_metricas_sistema_historico.parquet", meta["archivos_generados"])
 
 
 if __name__ == "__main__":

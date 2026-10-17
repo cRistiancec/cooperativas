@@ -6,6 +6,23 @@ ni se alteran resultados numéricos.
 
 ---
 
+## [Segmento histórico] — 2026-10-17 — Ingesta con segmento point-in-time desde el origen
+
+### Añadido
+- `scripts/segmento_historico.py` y `master_data/dim_segmento_historico.parquet` (ver `docs/SEGMENTACION_HISTORICA.md`).
+- `agg_metricas_sistema_historico.parquet` (métricas por `segmento_historico`).
+- Puerta de validación de segmentos en `validar_actualizacion.py` y paso de verificación en el workflow.
+- `tests/test_segmento_historico.py` (14 pruebas, incluida ingesta extremo a extremo con cambio de segmento).
+
+### Cambiado
+- Balance, PyG, CAMEL y entidades acoplan `segmento_historico` desde la dimensión única.
+- El workflow versiona la dimensión y su bitácora de cambios.
+
+### Pendiente (requiere los ZIP originales)
+- Ejecutar `--rehidratar` para reemplazar el segmento ESTIMADO de 2018-2025 por el oficial.
+
+---
+
 ## [Fase 1] — 2026-07-22 — Identidad institucional + tema premium
 
 ### Añadido

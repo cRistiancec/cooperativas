@@ -212,6 +212,37 @@ def aplicar_segmento_historico(df: pd.DataFrame, dim: pd.DataFrame) -> pd.DataFr
     return df
 
 
+def acoplar_segmento(df: pd.DataFrame, nombre: str, ruta: Path | None = None) -> tuple[pd.DataFrame, dict]:
+    """Punto único de acople del segmento point-in-time para CUALQUIER dataset
+    largo (balance, PyG, CAMEL...). La dimensión es la única fuente de verdad:
+    así los tres datasets nunca discrepan entre sí. Devuelve (df, reporte).
+
+    reporte: filas, pct_cubierto (filas con segmento real), discrepancias_fuente
+    (filas donde el dato propio del archivo —no estimado— difiere de la dimensión)."""
+    ruta = Path(ruta or DIM_PATH)
+    if not ruta.exists():
+        print(f"  [segmento_historico:{nombre}] ADVERTENCIA: no existe la dimensión; "
+              "el segmento queda ESTIMADO (retroactivo).")
+        if "segmento_historico" not in df.columns:
+            df = df.assign(segmento_historico=df["segmento"], segmento_historico_estimado=True)
+        return df, {"dataset": nombre, "filas": len(df), "pct_cubierto": 0.0, "discrepancias_fuente": 0}
+    propio_real = None
+    if {"segmento_historico", "segmento_historico_estimado"} <= set(df.columns):
+        propio_real = ~df["segmento_historico_estimado"].fillna(True).astype(bool)
+        propio = df["segmento_historico"].astype(str)
+    out = aplicar_segmento_historico(df, pd.read_parquet(ruta))
+    disc = 0
+    if propio_real is not None:
+        disc = int((propio_real & ~out["segmento_historico_estimado"] &
+                    (propio != out["segmento_historico"].astype(str))).sum())
+    rep = {"dataset": nombre, "filas": len(out),
+           "pct_cubierto": round(float((~out["segmento_historico_estimado"]).mean() * 100), 2),
+           "discrepancias_fuente": disc}
+    print(f"  [segmento_historico:{nombre}] cubierto={rep['pct_cubierto']}% "
+          f"discrepancias_vs_dimension={disc}")
+    return out, rep
+
+
 def verificar(ruta: Path = DIM_PATH) -> int:
     """Informe de cobertura y de cambios de segmento. Código de salida 1 si falla."""
     if not Path(ruta).exists():

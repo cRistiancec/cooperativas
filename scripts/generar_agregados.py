@@ -107,16 +107,36 @@ def main():
     print(f"    agg_catalogo_cooperativas.parquet: {len(catalogo):,} registros")
 
     # =========================================================================
+    # AGREGADO 5: Métricas por fecha y SEGMENTO HISTÓRICO (point-in-time)
+    # Complementa a agg_metricas_sistema (que usa el segmento vigente aplicado
+    # a toda la serie). Para análisis sistémico por período usar ESTE archivo.
+    # =========================================================================
+    archivos_agg = [
+        'agg_metricas_sistema.parquet', 'agg_ranking_cooperativas.parquet',
+        'agg_series_temporales.parquet', 'agg_catalogo_cooperativas.parquet',
+    ]
+    if 'segmento_historico' in df.columns:
+        print("\n[extra] Métricas por segmento histórico (point-in-time)...")
+        metricas_hist = df_codigos.groupby(
+            ['fecha', 'segmento_historico', 'codigo'], observed=True,
+        ).agg(
+            valor_total=('valor', 'sum'),
+            num_cooperativas=('cooperativa', 'nunique'),
+            pct_estimado=('segmento_historico_estimado', 'mean'),
+        ).reset_index()
+        guardar_parquet_atomico(metricas_hist, MASTER_DATA_DIR / "agg_metricas_sistema_historico.parquet", index=False)
+        archivos_agg.append('agg_metricas_sistema_historico.parquet')
+        print(f"    agg_metricas_sistema_historico.parquet: {len(metricas_hist):,} registros")
+    else:
+        print("\n[extra] ADVERTENCIA: balance.parquet sin segmento_historico; "
+              "no se genera agg_metricas_sistema_historico.parquet.")
+
+    # =========================================================================
     # METADATA
     # =========================================================================
     metadata = {
         'fecha_generacion': datetime.now().isoformat(),
-        'archivos_generados': [
-            'agg_metricas_sistema.parquet',
-            'agg_ranking_cooperativas.parquet',
-            'agg_series_temporales.parquet',
-            'agg_catalogo_cooperativas.parquet'
-        ],
+        'archivos_generados': archivos_agg,
         'registros_originales': len(df),
         'fechas': {
             'min': str(df['fecha'].min()),

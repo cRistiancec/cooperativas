@@ -631,8 +631,22 @@ def cargar_segmento_historico() -> pd.DataFrame:
 
     if not pd.api.types.is_datetime64_any_dtype(df['fecha']):
         df['fecha'] = pd.to_datetime(df['fecha'])
+    df = df.drop_duplicates(subset=['fecha', 'cooperativa'])
 
-    return df.drop_duplicates(subset=['fecha', 'cooperativa'])
+    # La dimensión oficial (una fila por cooperativa-mes, tomada del archivo
+    # SEPS de ese corte) manda sobre cualquier backfill estimado del balance.
+    dim_path = MASTER_DATA_DIR / "dim_segmento_historico.parquet"
+    if dim_path.exists():
+        dim = pd.read_parquet(dim_path, columns=['cooperativa', 'fecha', 'segmento_historico'])
+        dim['fecha'] = pd.to_datetime(dim['fecha'])
+        dim['cooperativa'] = dim['cooperativa'].astype(str)
+        df['cooperativa'] = df['cooperativa'].astype(str)
+        df = df.drop(columns=['segmento_historico', 'segmento_historico_estimado'], errors='ignore')
+        df = df.merge(dim, on=['cooperativa', 'fecha'], how='left')
+        df['segmento_historico_estimado'] = df['segmento_historico'].isna()
+        df['segmento_historico'] = df['segmento_historico'].fillna(df['segmento_actual'])
+
+    return df
 
 
 @st.cache_data(ttl=3600)
