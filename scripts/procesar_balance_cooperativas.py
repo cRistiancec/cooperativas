@@ -14,8 +14,12 @@ import warnings
 
 try:
     from io_atomico import guardar_parquet_atomico
+    from segmento_historico import (construir_dim, upsert_dim, aplicar_segmento_historico,
+                                    DIM_PATH as DIM_SEGMENTO_PATH)
 except ModuleNotFoundError:
     from scripts.io_atomico import guardar_parquet_atomico
+    from scripts.segmento_historico import (construir_dim, upsert_dim, aplicar_segmento_historico,
+                                            DIM_PATH as DIM_SEGMENTO_PATH)
 
 warnings.filterwarnings('ignore')
 
@@ -393,6 +397,21 @@ def generar_balance_parquet():
         except Exception as e:
             print(f"    ERROR: {e}")
 
+    # --- Segmento histórico point-in-time: se acopla en CADA ingesta ---------
+    # El SEGMENTO que trae el archivo oficial de cada mes se guarda en la tabla
+    # de dimensión master_data/dim_segmento_historico.parquet (upsert por mes).
+    # Si el archivo trae un segmento ausente/desconocido/contradictorio, la
+    # ingesta FALLA (no se publica un dato con segmento inferido).
+    if dataframes:
+        dim_nuevo = construir_dim(
+            pd.concat([d[['cooperativa', 'fecha', 'segmento_historico']] for d in dataframes],
+                      ignore_index=True),
+            fuente=",".join(z.name for z in zips))
+        resumen_seg = upsert_dim(dim_nuevo, DIM_SEGMENTO_PATH)
+        print(f"\n[segmento_historico] meses={resumen_seg['meses_reemplazados']} "
+              f"nuevas={resumen_seg['filas_nuevas']} retiradas={resumen_seg['filas_retiradas']} "
+              f"revisiones_segmento={len(resumen_seg['revisiones_de_segmento'])}")
+
     # Combinar datos históricos con los nuevos
     if df_historico is not None and len(dataframes) > 0:
         print("\nCombinando datos históricos con nuevos...")
@@ -428,6 +447,13 @@ def generar_balance_parquet():
     # conocido de cada cooperativa. Para análisis por período usar
     # `segmento_historico` en su lugar (ver nota en procesar_dataframe()).
     df_final['segmento_actual'] = df_final['segmento']
+    # Acoplar el segmento point-in-time desde la dimensión. Donde la dimensión
+    # no cubre la cooperativa-fecha, el valor queda marcado como ESTIMADO.
+    if DIM_SEGMENTO_PATH.exists():
+        df_final = aplicar_segmento_historico(df_final, pd.read_parquet(DIM_SEGMENTO_PATH))
+    else:
+        print("  [segmento_historico] ADVERTENCIA: no existe dim_segmento_historico.parquet; "
+              "ejecutar scripts/segmento_historico.py --rehidratar <ZIPs históricos>.")
     if 'segmento_historico' not in df_final.columns:
         df_final['segmento_historico'] = df_final['segmento'].astype('object')
     if 'segmento_historico_estimado' not in df_final.columns:
