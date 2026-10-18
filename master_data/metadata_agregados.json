@@ -1,14 +1,15 @@
 {
-  "fecha_generacion": "2026-09-17T21:51:54.176615",
+  "fecha_generacion": "2026-10-18T05:44:34.118789",
   "archivos_generados": [
     "agg_metricas_sistema.parquet",
     "agg_ranking_cooperativas.parquet",
     "agg_series_temporales.parquet",
-    "agg_catalogo_cooperativas.parquet"
+    "agg_catalogo_cooperativas.parquet",
+    "agg_metricas_sistema_historico.parquet"
   ],
-  "registros_originales": 24639010,
+  "registros_originales": 24873126,
   "fechas": {
     "min": "2018-01-31 00:00:00",
-    "max": "2026-08-31 00:00:00"
+    "max": "2026-09-30 00:00:00"
   }
 }

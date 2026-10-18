@@ -1,13 +1,13 @@
 {
-  "fecha_procesamiento": "2026-09-17T21:52:41.390898",
+  "fecha_procesamiento": "2026-10-18T05:45:27.433785",
   "archivos_procesados": [
     "2026-EEFF-MEN.zip"
   ],
-  "registros_totales": 2005435,
-  "registros_pyg": 311605,
+  "registros_totales": 2255370,
+  "registros_pyg": 350440,
   "fechas": {
     "min": "2026-01-31 00:00:00",
-    "max": "2026-08-31 00:00:00"
+    "max": "2026-09-30 00:00:00"
   },
   "segmentos": [
     "SEGMENTO 1 MUTUALISTA",
