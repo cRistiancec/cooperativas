@@ -1,5 +1,6 @@
 """Pruebas de la ingesta del segmento histórico (point-in-time) desde los ZIP de la SEPS."""
 import json
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -255,3 +256,27 @@ class FuenteTrimestralTests(unittest.TestCase):
     def test_reparar_mojibake(self):
         self.assertEqual(sh.reparar_mojibake("CRÃ‰DITO"), "CRÉDITO")
         self.assertEqual(sh.reparar_mojibake("CREDITO"), "CREDITO")
+
+
+class ActualizarEntidadesTests(unittest.TestCase):
+    def test_fusiona_con_cortes_guardados_y_no_encoge_la_dimension(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            previos = pd.DataFrame({"ruc": ["1", "1"], "cooperativa": ["A", "A"],
+                "fecha": pd.to_datetime(["2020-03-31", "2020-06-30"]),
+                "segmento_historico": ["SEGMENTO 3", "SEGMENTO 2"], "fuente": "entidades_trimestral:x"})
+            previos.to_parquet(d / "entidades_trimestral.parquet", index=False)
+            nuevo = pd.DataFrame({"ruc": ["1"], "cooperativa": ["A"],
+                "fecha": pd.to_datetime(["2020-09-30"]), "segmento_historico": ["SEGMENTO 2"],
+                "fuente": "entidades_trimestral:y"})
+            ruta = d / "dim.parquet"
+            sh.guardar_parquet_atomico(sh.expandir_cortes_a_mensual(previos), ruta, engine="pyarrow")
+            with mock.patch.dict(sys.modules, {"descargar_datos_seps": mock.MagicMock(
+                    ENTIDADES_DIR=d, descargar_entidades_trimestral=lambda a: d)}), \
+                 mock.patch.object(sh, "cargar_cortes_entidades", return_value=nuevo):
+                sh.actualizar_entidades([2020], ruta=ruta)
+            dim = pd.read_parquet(ruta)
+            self.assertEqual(pd.to_datetime(dim.fecha).min(), pd.Timestamp("2020-03-31"))
+            self.assertIn(pd.Timestamp("2020-09-30"), set(pd.to_datetime(dim.fecha)))

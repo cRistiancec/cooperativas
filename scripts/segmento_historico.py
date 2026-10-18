@@ -358,7 +358,16 @@ def actualizar_entidades(anios: list[int] | None = None, ruta: Path = DIM_PATH) 
     for a in (anios or [hoy - 1, hoy]):
         if descargar_entidades_trimestral(a) is None:
             print(f"  [entidades] {a}: no publicado todavía")
-    cortes = cargar_cortes_entidades(ENTIDADES_DIR)
+    nuevos = cargar_cortes_entidades(ENTIDADES_DIR)
+    # Los ZIP descargados no viven en el repo: se fusionan con los cortes ya guardados
+    # (los nuevos ganan ante una revisión del mismo RUC-corte).
+    guardado = Path(ruta).parent / "entidades_trimestral.parquet"
+    if guardado.exists():
+        previos = pd.read_parquet(guardado)
+        previos["fecha"] = pd.to_datetime(previos["fecha"])
+        cortes = pd.concat([previos, nuevos], ignore_index=True).drop_duplicates(["ruc", "fecha"], keep="last")
+    else:
+        cortes = nuevos
     dim_prev = pd.read_parquet(ruta)
     dim_prev["fecha"] = pd.to_datetime(dim_prev["fecha"])
     exacto = dim_prev[~dim_prev["fuente"].str.startswith("entidades_trimestral")]
