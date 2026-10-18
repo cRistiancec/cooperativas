@@ -1,0 +1,264 @@
+{
+ "indice_sensibilidad": {
+  "spearman_min": 0.5559361791522418,
+  "spearman_p05": 0.6953663386366736,
+  "spearman_mediana": 0.8755241589628033,
+  "spearman_eq_vs_pca": 0.9273078310417736,
+  "var_explicada_pc1": 0.3181639360457857,
+  "pesos_pca": {
+   "solvencia_proxy": 0.07658077914791682,
+   "liquidez": 0.05877535582808638,
+   "morosidad": 0.27095884309739304,
+   "cobertura": 0.26444534220068994,
+   "roa": 0.2393975888892837,
+   "eficiencia": 0.08984209083663013
+  }
+ },
+ "indice_por_segmento": {
+  "SEGMENTO 1": {
+   "count": 3630.0,
+   "mean": -0.169,
+   "50%": -0.1574,
+   "std": 0.3337
+  },
+  "SEGMENTO 2": {
+   "count": 4776.0,
+   "mean": -0.0697,
+   "50%": -0.0209,
+   "std": 0.4947
+  },
+  "SEGMENTO 3": {
+   "count": 7753.0,
+   "mean": 0.0975,
+   "50%": 0.1052,
+   "std": 0.5749
+  }
+ },
+ "panel_fe": {
+  "n_obs": 15601,
+  "n_coop": 242,
+  "coop_con_reclasificacion": 60,
+  "M1_tamano_crecimiento": {
+   "ln_activos": {
+    "coef": -0.12160283790902375,
+    "ee": 0.06681669964309794,
+    "p": 0.06876710873586804,
+    "ic95": [
+     -0.252561162775326,
+     0.009355486957278489
+    ]
+   },
+   "crec": {
+    "coef": -0.005420034647383984,
+    "ee": 0.0008624077877652764,
+    "p": 3.283392923843517e-10,
+    "ic95": [
+     -0.007110322851390788,
+     -0.0037297464433771795
+    ]
+   }
+  },
+  "M2_segmento_FE": {
+   "s2": {
+    "coef": -0.16666459313136903,
+    "ee": 0.07463189631690798,
+    "p": 0.025538724051208852,
+    "ic95": [
+     -0.31294042201043615,
+     -0.020388764252301877
+    ]
+   },
+   "s3": {
+    "coef": -0.1352466570329509,
+    "ee": 0.08829033804433604,
+    "p": 0.12556196285381038,
+    "ic95": [
+     -0.3082925397827161,
+     0.037799225716814294
+    ]
+   },
+   "ln_activos": {
+    "coef": -0.1323719166296889,
+    "ee": 0.06865566849777585,
+    "p": 0.053848264227153005,
+    "ic95": [
+     -0.2669345542198507,
+     0.0021907209604729305
+    ]
+   },
+   "crec": {
+    "coef": -0.005252743387126286,
+    "ee": 0.0008426332388756003,
+    "p": 4.5547409636726195e-10,
+    "ic95": [
+     -0.006904274187498798,
+     -0.003601212586753773
+    ]
+   }
+  },
+  "M3_interacciones": {
+   "crec": {
+    "coef": -0.005113914566252128,
+    "ee": 0.0012496031096773787,
+    "p": 4.2687419444252544e-05,
+    "ic95": [
+     -0.007563091656189045,
+     -0.002664737476315211
+    ]
+   },
+   "crec:s2": {
+    "coef": 0.00023361527792250847,
+    "ee": 0.001677083498045883,
+    "p": 0.8892142458134789,
+    "ic95": [
+     -0.0030534079773138724,
+     0.003520638533158889
+    ]
+   },
+   "crec:s3": {
+    "coef": -0.00035627385266383857,
+    "ee": 0.0016693269299607046,
+    "p": 0.8309965324804002,
+    "ic95": [
+     -0.003628094513809637,
+     0.0029155468084819595
+    ]
+   }
+  },
+  "M3_wald_heterogeneidad": {
+   "estadistico": 0.1125508775842586,
+   "p": 0.9452787335969886
+  },
+  "M4_I_t+12": {
+   "indice_eq": {
+    "coef": 0.26790483071974813,
+    "ee": 0.0436416518374599,
+    "p": 8.317765196377294e-10,
+    "ic95": [
+     0.18236876489249046,
+     0.35344089654700583
+    ]
+   },
+   "crec": {
+    "coef": -0.001652646775878847,
+    "ee": 0.0007245725616634348,
+    "p": 0.022556879384373996,
+    "ic95": [
+     -0.0030727829009251067,
+     -0.00023251065083258748
+    ]
+   },
+   "ln_activos": {
+    "coef": 0.030062526334216945,
+    "ee": 0.06617383395931904,
+    "p": 0.649615596085048,
+    "ic95": [
+     -0.09963580494498195,
+     0.15976085761341582
+    ]
+   }
+  },
+  "M4_n": 12784,
+  "nota": "Errores agrupados por cooperativa. Con efectos fijos de entidad, el coeficiente de segmento proviene solo de reclasificaciones; no es una comparación entre entidades."
+ },
+ "n_eventos_en_panel": 16,
+ "alerta": {
+  "n_train": 9257,
+  "n_test": 4581,
+  "eventos_train": 52,
+  "eventos_test": 0,
+  "coop_evento_train": 8,
+  "coop_evento_test": 0,
+  "horizonte_m": 12,
+  "corte": "2023-12-31",
+  "ventana_test_m": 24,
+  "advertencia": "Exploratorio: pocos eventos distintos; IC amplios; no usar para decisiones.",
+  "modelo": "no estimable (se exigen >=3 cooperativas con evento en entrenamiento y >=2 en prueba)"
+ },
+ "alerta_origenes_rodantes": {
+  "2020-12-31": {
+   "n_train": 3504,
+   "n_test": 3658,
+   "eventos_train": 45,
+   "eventos_test": 7,
+   "coop_evento_train": 8,
+   "coop_evento_test": 1,
+   "horizonte_m": 12,
+   "corte": "2020-12-31",
+   "ventana_test_m": 24,
+   "advertencia": "Exploratorio: pocos eventos distintos; IC amplios; no usar para decisiones.",
+   "modelo": "no estimable (se exigen >=3 cooperativas con evento en entrenamiento y >=2 en prueba)"
+  },
+  "2021-12-31": {
+   "n_train": 5387,
+   "n_test": 3870,
+   "eventos_train": 52,
+   "eventos_test": 0,
+   "coop_evento_train": 8,
+   "coop_evento_test": 0,
+   "horizonte_m": 12,
+   "corte": "2021-12-31",
+   "ventana_test_m": 24,
+   "advertencia": "Exploratorio: pocos eventos distintos; IC amplios; no usar para decisiones.",
+   "modelo": "no estimable (se exigen >=3 cooperativas con evento en entrenamiento y >=2 en prueba)"
+  },
+  "2022-06-30": {
+   "n_train": 6245,
+   "n_test": 4090,
+   "eventos_train": 52,
+   "eventos_test": 0,
+   "coop_evento_train": 8,
+   "coop_evento_test": 0,
+   "horizonte_m": 12,
+   "corte": "2022-06-30",
+   "ventana_test_m": 24,
+   "advertencia": "Exploratorio: pocos eventos distintos; IC amplios; no usar para decisiones.",
+   "modelo": "no estimable (se exigen >=3 cooperativas con evento en entrenamiento y >=2 en prueba)"
+  },
+  "2022-12-31": {
+   "n_train": 7162,
+   "n_test": 4330,
+   "eventos_train": 52,
+   "eventos_test": 0,
+   "coop_evento_train": 8,
+   "coop_evento_test": 0,
+   "horizonte_m": 12,
+   "corte": "2022-12-31",
+   "ventana_test_m": 24,
+   "advertencia": "Exploratorio: pocos eventos distintos; IC amplios; no usar para decisiones.",
+   "modelo": "no estimable (se exigen >=3 cooperativas con evento en entrenamiento y >=2 en prueba)"
+  },
+  "2023-06-30": {
+   "n_train": 8189,
+   "n_test": 4466,
+   "eventos_train": 52,
+   "eventos_test": 0,
+   "coop_evento_train": 8,
+   "coop_evento_test": 0,
+   "horizonte_m": 12,
+   "corte": "2023-06-30",
+   "ventana_test_m": 24,
+   "advertencia": "Exploratorio: pocos eventos distintos; IC amplios; no usar para decisiones.",
+   "modelo": "no estimable (se exigen >=3 cooperativas con evento en entrenamiento y >=2 en prueba)"
+  }
+ },
+ "eventos_fecha": {
+  "CAMARA DE COMERCIO DE AMBATO LTDA EN LIQUIDACION": "2024-12-31",
+  "CONSTRUCCION COMERCIO Y PRODUCCION LTDA": "2021-09-30",
+  "COOP CATAR LTDA EN LIQUIDACION": "2023-09-30",
+  "CREA LTDA EN LIQUIDACION": "2025-09-30",
+  "DE IMBABURA AMAZONAS": "2019-12-31",
+  "DEL DISTRITO METROPOLITANO DE QUITO AMAZONAS EN LIQUIDACION": "2022-06-30",
+  "INDIGENA SAC PELILEO LTDA": "2019-06-30",
+  "JUAN DE SALINAS EN LIQUIDACION": "2022-09-30",
+  "MAS AHORRO SOLIDARIO MASCOOP": "2019-09-30",
+  "PILAHUIN EN LIQUIDACION": "2023-12-31",
+  "SAN ALFONSO LTDA": "2018-12-31",
+  "SAN VICENTE DEL SUR": "2019-12-31",
+  "SANTA ANA DE NAYON": "2019-06-30",
+  "SEMBRANDO UN NUEVO PAIS EN LIQUIDACION": "2020-03-31",
+  "SEMILLA DEL PROGRESO LTDA": "2024-06-30",
+  "SUBOFICIALES DE LA POLICIA NACIONAL": "2019-06-30"
+ },
+ "eventos_con_obs_previas_12m": 8
+}

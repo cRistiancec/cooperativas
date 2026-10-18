@@ -14,7 +14,7 @@ _partes = []
 for rb in _pf.iter_batches(batch_size=2_000_000, columns=_cols):
     d = rb.to_pandas()
     d['codigo'] = d.codigo.astype(str)
-    d = d[d.codigo.str.len() <= 4]
+    d = d[(d.codigo.str.len() <= 4) | d.codigo.isin(['210305','210310'])]
     seg_col = 'segmento_historico' if 'segmento_historico' in d else 'segmento'
     d = d[d[seg_col].astype(str).isin(['SEGMENTO 1','SEGMENTO 2','SEGMENTO 3'])]
     d['cooperativa'] = d.cooperativa.astype(str)
@@ -41,7 +41,7 @@ cod_impr = [str(c) for c in range(1425,1490) if str(c) not in ('1473','1475','14
 cod_cart = [str(c) for c in range(1401,1490)]
 V = {'activos':s(['1']),'pasivos':s(['2']),'patrimonio':s(['3']),'fondos_disponibles':s(['11']),
  'cartera_neta_14':s(['14']),'cartera_improductiva':s(cod_impr),'provisiones':-s(['1499']),
- 'dep_vista':s(['2101']),'dep_plazo':s(['2103']),'obligaciones_publico':s(['21']),
+ 'dep_vista':s(['2101']),'dep_corto':s(['2101','210305','210310']),'dep_plazo':s(['2103']),'obligaciones_publico':s(['21']),
  'obligaciones_financieras':s(['26']),'ingresos_ytd':s(['5']),'gastos_ytd':s(['4']),
  'gastos_operacion_ytd':s(['45']),'ingresos_oper_ytd':s(['51','52','53','54','55']),
  'intereses_causados_ytd':s(['41']),'provisiones_gasto_ytd':s(['44'])}
@@ -71,11 +71,24 @@ P['activos_l12'] = lag12('activos'); P['patrimonio_l12']=lag12('patrimonio')
 P = P.reset_index()
 den = lambda a: a.where(a>0)
 P['solvencia_proxy'] = P.patrimonio/den(P.activos)*100
-P['liquidez_vista'] = P.fondos_disponibles/den(P.dep_vista)*100
+# Liquidez SEPS (metodología): fondos disponibles / depósitos a corto plazo (vista + 1-30d + 31-90d). Verificada: 100% exacta vs seps_LIQ.
+P['liquidez'] = P.fondos_disponibles/den(P.dep_corto)*100
+P['liquidez_vista'] = P.fondos_disponibles/den(P.dep_vista)*100   # alterna (no oficial)
 P['liquidez_total'] = P.fondos_disponibles/den(P.obligaciones_publico)*100
 P['morosidad'] = P.cartera_improductiva/den(P.cartera_bruta)*100
 P['cobertura'] = P.provisiones/den(P.cartera_improductiva)*100
-P['roa_12m'] = P.resultado_12m/den((P.activos+P.activos_l12)/2)*100
+# ROA/ROE estilo SEPS: resultado YTD anualizado (x12/m) / promedio de saldos de fin de mes desde el diciembre previo hasta el mes m. ~91-93% exacto vs SEPS.
+def prom_ytd(col):
+    X = P.set_index(['cooperativa','fecha'])[col]
+    dic = pd.Series(X.reindex(pd.MultiIndex.from_arrays([P.cooperativa, P.fecha.apply(lambda d: pd.Timestamp(d.year-1,12,31))])).values, index=P.index)
+    ytd = P.assign(_v=P[col]).groupby(['cooperativa', P.fecha.dt.year])['_v']
+    suma = ytd.cumsum(); n = ytd.cumcount()+1
+    ok = n.eq(P.fecha.dt.month) & dic.notna()          # exige meses completos
+    return ((dic + suma)/(n+1)).where(ok)
+m_ = P.fecha.dt.month
+P['roa'] = P.resultado_ytd*12/m_/den(prom_ytd('activos'))*100
+P['roe'] = P.resultado_ytd*12/m_/den(prom_ytd('patrimonio'))*100
+P['roa_12m'] = P.resultado_12m/den((P.activos+P.activos_l12)/2)*100   # alterna (no oficial)
 P['roe_12m'] = P.resultado_12m/den((P.patrimonio+P.patrimonio_l12)/2)*100
 P['eficiencia'] = P.gastos_operacion_12m/den(P.ingresos_oper_12m)*100
 P['crec_activos_12m'] = (P.activos/den(P.activos_l12)-1)*100
@@ -97,9 +110,9 @@ P.to_parquet(out+'panel_cooperativas_S1S3.parquet',index=False); P.to_csv(out+'p
 # --- reporte de calidad ---
 q = {'filas':len(P),'cooperativas':int(P.cooperativa.nunique()),'fecha_min':str(P.fecha.min().date()),'fecha_max':str(P.fecha.max().date()),
  'dup_coop_fecha':int(P.duplicated(['cooperativa','fecha']).sum()),
- 'nulos_pct':{c:round(P[c].isna().mean()*100,2) for c in ['solvencia_proxy','liquidez_vista','morosidad','roa_12m','roe_12m','eficiencia','crec_activos_12m']},
+ 'nulos_pct':{c:round(P[c].isna().mean()*100,2) for c in ['solvencia_proxy','liquidez','morosidad','roa','roe','eficiencia','crec_activos_12m']},
  'morosidad_fuera_0_100':int(((P.morosidad<0)|(P.morosidad>100)).sum()),'solvencia_negativa':int((P.solvencia_proxy<0).sum())}
-for a,b in [('morosidad','seps_MOR_TOT'),('cobertura','seps_COB_TOT'),('roa_12m','seps_ROA'),('roe_12m','seps_ROE'),('liquidez_vista','seps_LIQ')]:
+for a,b in [('morosidad','seps_MOR_TOT'),('cobertura','seps_COB_TOT'),('roa','seps_ROA'),('roe','seps_ROE'),('liquidez','seps_LIQ'),('roa_12m','seps_ROA'),('liquidez_vista','seps_LIQ')]:
     d = P[[a,b]].dropna().copy(); d[b] = d[b]*100   # los indicadores SEPS vienen como razón (0-1)
     
     q['recon_'+a+'_vs_'+b] = {'n':len(d),'corr':round(d[a].corr(d[b]),4) if len(d)>2 else None,'mediana_dif_abs':round((d[a]-d[b]).abs().median(),4) if len(d) else None}
