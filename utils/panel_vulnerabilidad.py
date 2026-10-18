@@ -62,5 +62,24 @@ def z_orientado(d: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
         out[c] = z if INDICADORES[c][3] else -z
     return out
 
+def csv_bytes(df: pd.DataFrame) -> bytes:
+    """Contenido EXACTO de la descarga: la misma tabla que se muestra (UTF-8 con BOM para Excel)."""
+    return df.to_csv(index=False).encode("utf-8-sig")
+
 def boton_csv(df: pd.DataFrame, nombre: str, key: str):
-    st.download_button("⬇️ Descargar tabla mostrada (CSV)", df.to_csv(index=False).encode("utf-8-sig"), file_name=nombre, mime="text/csv", key=key)
+    st.download_button("⬇️ Descargar tabla mostrada (CSV)", csv_bytes(df), file_name=nombre, mime="text/csv", key=key)
+
+VISTAS = {
+    "Principal (exacta + arrastrada, procedencia conocida)": ["exacto_mes", "arrastrado"],
+    "Solo clasificación exacta del mes": ["exacto_mes"],
+    "Solo clasificación arrastrada de otro corte": ["arrastrado"],
+}
+
+def filtrar_vista(d: pd.DataFrame, vista: str) -> pd.DataFrame:
+    return d[d.segmento_procedencia.isin(VISTAS[vista])]
+
+def composicion(d: pd.DataFrame) -> pd.Series:
+    """% de observaciones por procedencia del segmento (para mostrar siempre junto a una comparación)."""
+    return d.segmento_procedencia.value_counts(normalize=True).mul(100).round(1)
+
+REGLA_Z = "z robusto = (valor − mediana de pares)/(1,4826·MAD) vs. cooperativas del MISMO segmento y fecha; dirección adversa; umbral interno"

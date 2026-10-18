@@ -163,7 +163,7 @@ jobs:
       - name: Ejecutar pruebas automatizadas
         id: pruebas
         if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
-        run: python -m unittest discover -s tests -v 2>&1 | tail -40
+        run: python -m unittest discover -s tests
 
       - name: Publicar evidencia como artefacto
         if: always() && (steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true')

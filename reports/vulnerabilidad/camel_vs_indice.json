@@ -1,0 +1,14 @@
+{
+ "n_fechas": 81,
+ "n_minimo": 151,
+ "n_maximo": 201,
+ "spearman_mediana": -0.8756682430015899,
+ "spearman_min": -0.913318229348205,
+ "spearman_max": -0.8176974584203328,
+ "ultimo_corte": {
+  "fecha": "2026-09-30",
+  "n": 191,
+  "spearman": -0.8716334009169143
+ },
+ "interpretacion": "Asociación transversal por fecha. Ambos índices comparten insumos (morosidad, cobertura, ROA, liquidez), por lo que parte de la asociación es mecánica; CAMEL usa percentiles dentro del universo y el índice usa z pooled winsorizado. No es validación predictiva ni de criterio externo."
+}

@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from ui import aplicar_tema, render_sidebar
 from utils.data_loader import cargar_metadata
-from utils.panel_vulnerabilidad import INDICADORES, SEGMENTOS, boton_csv, cargar_panel, descriptivos, fechas_panel
+from utils.panel_vulnerabilidad import INDICADORES, SEGMENTOS, VISTAS, boton_csv, cargar_panel, composicion, descriptivos, fechas_panel, filtrar_vista
 
 st.set_page_config(page_title="Comparativo por segmento | Radar Cooperativo Ecuador", page_icon="📊", layout="wide")
 aplicar_tema()
@@ -25,12 +25,15 @@ def main():
     fmin, fmax = d.fecha.min().to_pydatetime(), d.fecha.max().to_pydatetime()
     rango = st.sidebar.slider("Período", fmin, fmax, (fmin, fmax), format="MM/YYYY", key="cmp_rango")
     fecha_corte = st.sidebar.selectbox("Fecha para estadísticos", fechas_panel(d), format_func=lambda x: pd.Timestamp(x).strftime("%m/%Y"), key="cmp_fecha")
-    solo_exacto = st.sidebar.checkbox("Solo segmento exacto del mes", value=False, key="cmp_exacto",
-                                      help="Excluye observaciones con segmento arrastrado o estimado.")
+    vista = st.sidebar.radio("Vista de clasificación", list(VISTAS), key="cmp_vista",
+                             help="Principal: clasificación con procedencia y fecha conocidas. Exacta: la asignación corresponde al propio mes. Arrastrada: tomada de otro corte (≤2 meses).")
     x = d[d.segmento_repo.isin(segs) & d.fecha.between(*map(pd.Timestamp, rango))]
-    if solo_exacto: x = x[x.segmento_procedencia == "exacto_mes"]
-    x = x.dropna(subset=[ind])
+    base_sel = x                                    # composición ANTES de aplicar la vista (muestra lo que se excluye)
+    x = filtrar_vista(x, vista).dropna(subset=[ind])
     if x.empty: st.warning("Sin datos para la selección."); return
+    comp = composicion(base_sel); cA, cB, cC = st.columns(3)
+    cA.metric("Clasificación exacta del mes", f"{comp.get('exacto_mes', 0)} %"); cB.metric("Arrastrada de otro corte", f"{comp.get('arrastrado', 0)} %"); cC.metric("Estimada (excluida de las vistas)", f"{comp.get('estimado', 0)} %")
+    st.caption(f"Composición de las observaciones del período y segmentos seleccionados. Vista activa: **{vista}** ({len(x):,} observaciones).")
     nom, un, formula, _ = INDICADORES[ind]
     st.caption(f"**Fórmula:** {formula}  ·  **Unidad:** {un}  ·  **Fuente:** balance SEPS (master_data) → panel cooperativa-mes. Valores faltantes: se excluyen (no se imputan).")
     s = x.groupby(["fecha", "segmento_repo"])[ind].agg(mediana="median", p25=lambda v: v.quantile(.25), p75=lambda v: v.quantile(.75)).reset_index()

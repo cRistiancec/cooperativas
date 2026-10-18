@@ -32,6 +32,26 @@ def main():
         st.subheader("Procedencia del segmento en el panel S1–S3")
         p = d.assign(anio=d.fecha.dt.year).groupby(["anio", "segmento_procedencia"]).size().unstack(fill_value=0)
         st.dataframe(p, width='stretch')
+    cov = Path(__file__).parent.parent / "reports" / "vulnerabilidad" / "cobertura_segmentos.csv"
+    if cov.exists():
+        st.subheader("Cobertura de la clasificación por año, mes y segmento")
+        c = pd.read_csv(cov); a1, a2 = st.columns(2)
+        anios = a1.multiselect("Año", sorted(c.anio.unique()), default=sorted(c.anio.unique())[-2:], key="cal_anio")
+        segs = a2.multiselect("Segmento", sorted(c.segmento.unique()), default=sorted(c.segmento.unique()), key="cal_seg")
+        cv = c[c.anio.isin(anios) & c.segmento.isin(segs)]
+        st.dataframe(cv, width="stretch", hide_index=True); boton_csv(cv, "cobertura_segmentos_filtrada.csv", "dl_cov")
+        st.caption("exacto_mes = asignación del archivo SEPS del propio mes; arrastrado = último corte trimestral ≤2 meses; estimado = backfill; "
+                   "sin_clasificacion_verificable = sin procedencia conocida (0 en el panel actual).")
+    eq = Path(__file__).parent.parent / "master_data" / "equivalencias_nombres.csv"
+    if eq.exists():
+        st.subheader("Equivalencias de nombres corregidas (trazabilidad)")
+        e = pd.read_csv(eq); st.dataframe(e, width="stretch", hide_index=True); boton_csv(e, "equivalencias_nombres.csv", "dl_eq")
+        st.caption("Corrección de codificación (UTF-8 leído como cp1252). Une identidades que aparecían duplicadas sin solape de fechas. El nombre de la fuente se conserva en esta tabla.")
+    if not d.empty and "patrimonio_negativo" in d:
+        neg = d[d.patrimonio_negativo][["cooperativa", "fecha", "segmento_repo", "activos", "pasivos", "patrimonio_total"]]
+        st.subheader(f"Observaciones con patrimonio total negativo ({len(neg)})")
+        st.dataframe(neg.round(0), width="stretch", hide_index=True); boton_csv(neg, "patrimonio_negativo.csv", "dl_neg")
+        st.caption("Valores reales de la fuente (identidad A = P + Pat verificada; pérdidas acumuladas superan capital y reservas). Se conservan; no se imputan.")
     st.subheader("Reconciliación con indicadores oficiales SEPS")
     q = Path(__file__).parent.parent / "reports" / "vulnerabilidad" / "calidad_panel.json"
     if q.exists():
