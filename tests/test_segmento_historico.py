@@ -280,3 +280,17 @@ class ActualizarEntidadesTests(unittest.TestCase):
             dim = pd.read_parquet(ruta)
             self.assertEqual(pd.to_datetime(dim.fecha).min(), pd.Timestamp("2020-03-31"))
             self.assertIn(pd.Timestamp("2020-09-30"), set(pd.to_datetime(dim.fecha)))
+
+
+class FilasAgregadasTests(unittest.TestCase):
+    def test_vt_total_toma_segmento_de_su_etiqueta(self):
+        df = pd.DataFrame({"cooperativa": ["VT_TOTAL SEGMENTO 2", "VT_TOTAL MUTUALISTAS", "X LTDA"],
+                           "fecha": pd.to_datetime(["2026-09-30"] * 3),
+                           "segmento": ["SEGMENTO 3"] * 3})
+        dim = sh.construir_dim(pd.DataFrame({"cooperativa": ["X LTDA"],
+            "fecha": pd.to_datetime(["2026-09-30"]), "segmento_historico": ["SEGMENTO 1"]}), "t")
+        r = sh.aplicar_segmento_historico(df, dim).set_index("cooperativa")
+        self.assertEqual(r.loc["VT_TOTAL SEGMENTO 2", "segmento_historico"], "SEGMENTO 2")
+        self.assertEqual(r.loc["VT_TOTAL MUTUALISTAS", "segmento_historico"], "SEGMENTO 1 MUTUALISTA")
+        self.assertFalse(r.loc["VT_TOTAL SEGMENTO 2", "segmento_historico_estimado"])
+        self.assertEqual(r.loc["X LTDA", "segmento_historico"], "SEGMENTO 1")

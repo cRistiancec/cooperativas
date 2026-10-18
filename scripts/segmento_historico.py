@@ -421,8 +421,19 @@ def aplicar_segmento_historico(df: pd.DataFrame, dim: pd.DataFrame) -> pd.DataFr
     pos[pos >= len(clave_dim)] = 0
     hallado = clave_dim[pos] == clave_df if len(clave_dim) else np.zeros(len(df), bool)
     previo = df["segmento_historico"].astype(object).to_numpy() if "segmento_historico" in df else df["segmento"].astype(object).to_numpy()
+    seg_final = np.where(hallado, seg_dim[pos], previo)
+    # Filas agregadas de la SEPS ("VT_TOTAL SEGMENTO 2", "VT_TOTAL MUTUALISTAS") no son
+    # entidades: su segmento es el de la propia etiqueta oficial (no una estimación).
+    vt = nombres.str.upper().str.startswith("VT_TOTAL").to_numpy()
+    if vt.any():
+        etiqueta = nombres[vt].str.upper().str.replace("VT_TOTAL", "", regex=False).str.strip().map(
+            lambda t: normalizar_segmento("MUTUALISTA" if t.startswith("MUTUALISTA") else t))
+        seg_final = seg_final.astype(object)
+        seg_final[vt] = np.where(etiqueta.notna().to_numpy(), etiqueta.to_numpy(object), seg_final[vt])
+        hallado = hallado.copy()
+        hallado[vt] = etiqueta.notna().to_numpy()
     df = df.copy()
-    df["segmento_historico"] = np.where(hallado, seg_dim[pos], previo)
+    df["segmento_historico"] = seg_final
     df["segmento_historico"] = df["segmento_historico"].astype("category")
     df["segmento_historico_estimado"] = ~hallado
     return df
