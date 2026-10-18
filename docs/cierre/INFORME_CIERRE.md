@@ -1,61 +1,82 @@
-# Expediente de cierre — Radar Cooperativo (segmentos 1–3), corte 30/09/2026
+# Expediente de cierre — Radar Cooperativo (segmentos 1–3), corte 30/09/2026 · v2
 
-Rama `feature/segmento-historico-ingesta` · PR #1 abierto (no fusionado a `main`). Evidencia numérica: `docs/cierre/validacion_componentes.json` (generada por `scripts/validar_cierre.py`, solo lectura).
+Estado final: **CIERRE TÉCNICO COMPLETO, PRODUCCIÓN PENDIENTE** (PR #1 sin fusionar; despliegue remoto no verificado).
+Cada afirmación se etiqueta: **[E]** evidencia comprobada · **[L]** limitación conocida · **[P]** pendiente.
 
-## 1. Informe de cierre
-**Comprobado sin reprocesar:** todos los Parquet de `master_data/` llegan a 2026-09-30 sin duplicados de clave y sin infinitos; `git status` confirma que ningún Parquet base fue modificado en esta etapa. Reconciliación con indicadores SEPS (panel S1–S3): morosidad y cobertura exactas; liquidez exacta (n=14.590); ROA corr 0,9997 y ROE 0,9985 (mediana de diferencia 0).
-**Corregido (solo artefactos derivados):** (a) `solvencia_proxy` pasa a (Activos−Pasivos)/Activos: la identidad contable es exacta (A = P + Pat + resultado YTD en ene–nov; en diciembre el resultado ya está cerrado dentro de Pat, A = P + Pat; 100 % de las 18.686 observaciones), por lo que patrimonio/activos tenía un diente de sierra anual (mediana sep 13,7 % → dic 14,3 %); (b) el panel incorpora `segmento_procedencia`.
-**Hallazgo central que condiciona la interpretación:** en 2020–2026 el **~67 %** de las observaciones del panel usa un segmento **arrastrado** del último corte trimestral (≤2 meses), no el archivo del propio mes; jul–ago 2026 se arrastran desde junio (100 % de las 403 observaciones). El indicador previo `segmento_historico_estimado` (0,55 %) no captaba el arrastre y por sí solo daba una impresión artificialmente limpia.
-**Pendiente:** ver §7.
+## 1. Verificación del estado inicial (hipótesis del prompt)
+| # | Hipótesis | Resultado |
+|---|---|---|
+| 1 | f4da720 en la rama del PR #1 | [E] Cierto; la rama avanzó con commits posteriores (este expediente). |
+| 5 | Parquet base no modificados | [E] Cierto hasta f4da720. **Después** se modificaron de forma justificada (§3). |
+| 12 | Workflow no validado en remoto | [E] Ahora validado en dos ejecuciones manuales sobre la rama, sin publicar (§6). |
+| 18 | `main` sigue con el flujo anterior | [E] Cierto, y `main` había avanzado: la corrida programada del 18/10 (commit d8f05c1) dejó el **PR en conflicto** y **sobrescribió la historia de solvencia** (§3). Resuelto en la rama; PR `mergeable: clean`. |
+Otras hipótesis (corte, 155 pruebas, 67 % arrastrado, patrimonio negativo, mojibake, alerta temprana) se re-verificaron y se corrigieron o precisaron abajo.
 
-## 2. Matriz de validación
-| Componente | Corte | Controles | Resultado | Evidencia |
-|---|---|---|---|---|
-| balance | 2026-09-30 | filas 24.873.126; 259 entidades; nulos valor 0 %; dup. clave 2026 = 0; 44/66/91 coop. S1/S2/S3 + 4 mutualistas en el corte | OK | validacion_componentes.json |
-| pyg | 2026-09-30 | 2.476.736 filas; dup. = 0; 209 entidades en el corte = 205 + 4 filas agregadas `VT_TOTAL*`; estimado 1,46 % | OK (desde 2020) | idem |
-| indicadores | 2026-09-30 | 628.732 filas; dup. = 0; 205 entidades; estimado 0,67 % | OK (desde 2020) | idem |
-| dim_segmento_historico | 2026-09-30 | 94.404 filas; dup. = 0; sep-2026 solo con 205 entidades del boletín mensual (meses previos ~917, incluye S4/S5) | Parcial | idem |
-| agg_series_temporales | 2026-09-30 | dup. = 0; 205 entidades | OK | idem |
-| solvencia (FS01) | 2026-09-30 | solo S1/mutualistas/FINANCOOP, 436 filas | OK (cobertura limitada, de origen) | metadata_solvencia.json |
-| Panel S1–S3 | 2026-09-30 | 18.686 filas, 255 coop., dup. 0; identidad contable 100 %; reconciliación SEPS | OK | reports/vulnerabilidad/calidad_panel.json; tests |
-| CAMEL existente | 2026-09-30 | 205 entidades, score en [12,7; 88,0], sin NaN; score_total = media de las 5 letras (chequeo puntual exacto); Spearman con índice de vulnerabilidad = −0,87 (coherente) | OK | ejecución del 18/10/2026 |
-| Streamlit | — | Ver §5 | Funcional local | AppTest + arranque real |
+## 2. Defectos hallados y tratamiento
+| Defecto | Causa raíz | Tratamiento | Evidencia |
+|---|---|---|---|
+| PR #1 en conflicto con `main` | La corrida programada de `main` (flujo antiguo) actualizó 14 archivos de datos al mismo corte | Merge de `main` en la rama conservando los datos de la rama; antes se comprobó que balance (conteo y suma por fecha), indicadores y PyG de `main` son idénticos en columnas comunes | commit de merge; API: `mergeable_state: clean` |
+| `solvencia.parquet` perdió la historia (3.548 → 436 filas; 2020–2026 → solo 2026), tanto en `main` como en la rama | `procesar_solvencia.py` reconstruía desde los ZIP presentes y el workflow solo descarga el año reciente | `fusionar_con_previo` (lo nuevo manda en el solape, la historia se conserva); historia restaurada desde el commit 6c0ddae (3.646 filas, 2020-01→2026-09, 81 meses) | test `SolvenciaTests`; `metadata_solvencia.json` (nota de restauración) |
+| 17 cooperativas con **dos identidades** (mojibake 2018–2021 / limpia 2022+, sin solape) | Los ZIP 2018–2021 se leyeron con otra codificación; `normalizar_nombre` no reparaba | `reparar_mojibake` en el normalizador; `scripts/corregir_nombres.py` renombra balance y dimensión; agregados y entidades regenerados; tabla `equivalencias_nombres.csv` | 259 → 242 entidades; panel 255 → 232 cooperativas; 0 mojibake en agg_catalogo |
+| 331 observaciones 2020–21 «sin correspondencia» | El mismo mojibake (la dimensión tenía el nombre correcto) | Resueltas por reparación determinista (sin similitud textual): 331/331 → clasificación **exacta** | panel: 0 `balance_historico` |
+| 6+1 entidades «X» / «X EN LIQUIDACION» contadas como salida y entrada falsas | La SEPS añade el sufijo al entrar en liquidación | Vínculo por sufijo exacto y fechas contiguas (`identidad.py`); se conserva `cooperativa_fuente` | 0 duplicados coop-mes; salidas 37 → 31 |
+| Efecto segmento «significativo» (S2 vs 1, p=0,027) | Artefacto de las series partidas | Tras unificar: p=0,12 (S2), 0,37 (S3) | `resultados_vulnerabilidad.json` |
+| Pruebas del workflow podían ocultar fallos (`… | tail`) | Pipe sin `pipefail` | Se quitó el pipe | log remoto: `Ran 164 tests … OK` |
+| Workflow: faltaban dependencias del panel; sin entradas seguras | — | `pip install -r requirements.txt`; entradas `forzar_panel` / `publicar` (por defecto sin publicar); `concurrency`; validación estricta; artefacto de evidencia | §6 |
 
-## 3. Registro de cambios
-| Archivo | Motivo / efecto |
+## 3. Reprocesamientos (registro)
+- **No se re-descargó ni re-ejecutó** ETL de indicadores, PyG ni CAMEL (nombres limpios; sin cambios de insumo).
+- **Parciales justificados:** (a) `solvencia.parquet`: restauración y fusión de historia; (b) `balance.parquet`: renombrado de 18 nombres por lotes (24.873.126 filas antes y después; esquema intacto) + dimensión de segmentos (94.404 → 94.113 filas; 291 colisiones tras renombrar, 1 con segmentos en conflicto resuelto por la regla exacto > arrastrado > corte más reciente); (c) regeneración de `agg_*` y `entidades_cooperativas` (derivados directos del balance); (d) panel derivado y `panel_vulnerabilidad.parquet`.
+- Copias de seguridad previas fuera del repositorio; el cambio es reversible desde git.
+
+## 4. Matriz de validación (corte 2026-09-30)
+| Componente | Controles | Resultado |
+|---|---|---|
+| balance | 24.873.126 filas; 242 entidades; 0 nulos; 0 duplicados 2026; S1/S2/S3 = 44/66/91 (+4 mutualistas) | [E] OK |
+| pyg / indicadores | 2.476.736 / 628.732 filas; 0 duplicados; corte presente; desde 2020 | [E] OK. PyG +4 filas agregadas `VT_TOTAL*` |
+| dim_segmento_historico | 94.113 filas; 0 duplicados; sep-2026 solo con las 205 entidades del boletín | [E] OK / [L] cobertura de sep-2026 |
+| solvencia (FS01) | 3.646 filas, 2020-01→2026-09; solo S1, mutualistas, FINANCOOP | [E] OK / [L] cobertura |
+| panel S1–S3 | 18.686 filas, 232 cooperativas; identidad contable exacta (ene–nov: A=P+Pat+Res; dic: A=P+Pat) | [E] OK |
+| Reconciliación SEPS | morosidad, cobertura, liquidez exactas; ROA 0,9997 / ROE 0,9985 | [E] OK |
+| CAMEL | score = media de 5 letras (pesos iguales, percentiles); 205 entidades; Spearman con índice −0,88 (mediana, 81 fechas, n=151–201; último corte −0,87, n=191) | [E] asociación, no validación predictiva |
+
+## 5. Clasificación de segmentos: procedencia y sensibilidad
+- Panel: **47,0 % exacta del mes**, 52,5 % arrastrada, 0,5 % estimada, 0 % sin clasificación verificable. En 2020–2026: 34,4 % / 65,1 % / 0,5 %. Julio–agosto 2026: 403/403 arrastradas desde junio. [E]
+- Cobertura por año, mes y segmento: `reports/vulnerabilidad/cobertura_segmentos.csv` (también en la página 19). Vistas en la página 17: principal, solo exacta, solo arrastrada, con la composición visible.
+- Sensibilidad: el orden descriptivo del índice (S1 < S2 < S3) **se mantiene** con solo clasificación exacta; los efectos FE del segmento no son significativos en ninguna muestra. [E]
+- [L] 6.604 observaciones exactas en la estimación FE; no se imputa ninguna clasificación. No se usa el segmento actual para reconstruir el pasado.
+
+## 6. Pruebas
+| Prueba | Resultado |
 |---|---|
-| `analytics/construir_panel.py` | liquidez y ROA/ROE oficiales; `solvencia_proxy` = patrimonio total; `segmento_procedencia` |
-| `analytics/vulnerabilidad/*` | módulo (índice, panel FE, alerta exploratoria); exporta `master_data/panel_vulnerabilidad.parquet` |
-| `master_data/panel_vulnerabilidad.parquet` | artefacto compacto (6,7 MB) que consumen las páginas 16–19 |
-| `pages/16–19_*.py`, `utils/panel_vulnerabilidad.py` | paneles A (resumen), B (comparativo), C+D (alertas y ficha), E (calidad) y exportaciones CSV (F) |
-| `scripts/validar_cierre.py` | validación de solo lectura reproducible |
-| `.github/workflows/actualizar_datos.yml` | paso best-effort que regenera el panel en cada actualización con datos nuevos (**no probado en remoto**) |
-| `tests/test_paginas_cierre.py`, `tests/test_vulnerabilidad.py` | pruebas nuevas |
-| `docs/VULNERABILIDAD_MODULO.md`, `docs/audit/*` | documentación |
+| `python -m unittest discover -s tests` (local, Py 3.13) | **164 pruebas, OK** (79 s) |
+| Mismo comando en GitHub Actions (Py 3.11, run 39162548418) | **164 pruebas, OK** (61 s) |
+| AppTest páginas 16–19 + interacciones (vistas, umbral, cooperativa, indicador) | sin excepciones |
+| **Navegador real** (Chromium/Playwright, `tests/e2e/e2e_descargas.py`): descarga de 3 CSV y comparación de **contenido** con el cálculo independiente | Comparativo (3 filas), Resumen (3 filas), Alertas (40 filas): **OK** |
+| Servidor `streamlit run Inicio.py` | `/_stcore/health` y `/` HTTP 200 |
+| Workflow manual en la rama (forzar_panel=true, publicar=false), runs 39161974633 y 39162548418 | `success`: panel regenerado (18.686 filas, idéntico al local), validación estricta OK, pruebas OK, artefacto `evidencia-actualizacion`, commit **omitido** |
+- [L] No se probó Excel (la app solo exporta CSV). No se midieron tiempos de carga en producción. El E2E cubre 3 de las descargas, no todas.
+- [L] El workflow no se probó con un mes nuevo real (la SEPS no había publicado: «Nada que publicar»); la ruta de publicación (commit/push) no se ejecutó.
 
-## 4. Registro de reprocesamientos
-- **Ninguno** de ingesta, descarga, ETL, indicadores o CAMEL en esta etapa (Parquet base intactos; hash/fecha sin cambios por `git status`).
-- **Parcial justificado:** reconstrucción del *panel derivado* (2 veces) por (i) añadir `segmento_procedencia` y (ii) corregir `solvencia_proxy`. Dependencias directas: módulo de vulnerabilidad y `panel_vulnerabilidad.parquet`. Resultado: pruebas verdes tras cada reconstrucción.
+## 7. Alertas y modelo predictivo
+Alertas = z robusto frente a pares del mismo segmento y fecha (umbral 1,5–3,0 seleccionable; detalle con indicador, valor, referencia, regla, período, procedencia y limitaciones; tabla de sensibilidad al umbral) + regla contable de patrimonio total negativo. **No son umbrales regulatorios ni probabilidad de insolvencia.** Modelo de alerta temprana: exploratorio, sin validar (13 entidades con evento y datos previos; AUC agrupa 2–5 entidades de prueba). Plan de investigación en `docs/VULNERABILIDAD_MODULO.md`.
+Patrimonio negativo: **real** (20 observaciones, 7 entidades; pérdidas acumuladas > capital+reservas; identidad exacta; 0 duplicados); se conserva y se señala en la app.
 
-## 5. Evidencia de pruebas
-- `python -m unittest discover -s tests` → **155 pruebas, OK** (75,9 s).
-- AppTest sobre `Inicio.py` y páginas 10, 16–19 → sin excepciones; interacciones (indicador, segmentos, "solo segmento exacto", mínimo de alertas, selección de cooperativa) sin excepciones.
-- `streamlit run Inicio.py --server.headless true` → `/_stcore/health` y `/` responden HTTP 200.
-- No se probó navegador real ni descarga efectiva de CSV (solo que el botón se construye).
+## 8. Guía de ejecución y recuperación
+- Dependencias: `pip install -r requirements.txt` (Py 3.12 en `runtime.txt`; probado en 3.11 remoto y 3.13 local). Arranque: `streamlit run Inicio.py`. Secreto opcional `ANTHROPIC_API_KEY` solo para el asistente; no se guarda en el repo.
+- Regenerar derivados: `python analytics/construir_panel.py . <tmp>` → `python -m analytics.vulnerabilidad.run_all <tmp>/panel_cooperativas_S1S3.parquet reports/vulnerabilidad master_data/panel_vulnerabilidad.parquet` → `python scripts/validar_cierre.py --estricto`.
+- Prueba segura del workflow: Actions → «Actualizar datos SEPS» → Run workflow en la rama con `forzar_panel=true`, `publicar=false`.
+- Recuperación: los cambios de datos están en commits separados (`git revert` del merge o de los commits `fix(solvencia)` / `fix(nombres)`); la corrida mensual tiene `concurrency` y no hace commit si no hay cambios.
 
-## 6. Guía de ejecución
-Python 3.12; `pip install -r requirements.txt` (sin dependencias nuevas). Arranque: `streamlit run Inicio.py`. Regenerar derivados tras actualizar `master_data/`:
-```
-python analytics/construir_panel.py . <dir_tmp>
-python -m analytics.vulnerabilidad.run_all <dir_tmp>/panel_cooperativas_S1S3.parquet reports/vulnerabilidad master_data/panel_vulnerabilidad.parquet
-python scripts/validar_cierre.py
-```
-Memoria: el constructor del panel lee el balance por lotes (≈7 GB suficientes).
+## 9. Estado de GitHub y despliegue
+- Rama `feature/segmento-historico-ingesta`; PR #1 abierto, `mergeable_state: clean`; **no hay checks automáticos en el PR** (el workflow solo corre por calendario o manualmente) [L].
+- Efecto de fusionar: desde la siguiente corrida programada, `main` ejecutará el flujo nuevo (segmento desde Entidades trimestral, solvencia sin pérdida de historia, panel + validación estricta + pruebas antes de publicar). Un fallo del panel o de las pruebas **bloqueará la publicación** del corte.
+- Streamlit Cloud: el README apunta a `https://cooperativas-q73wpzj6f7.streamlit.app`, que responde 303 hacia la autenticación de Streamlit; `docs/CONTEXTO.md` indica que apunta a `main` de `jp1309/cooperativas` (el repo upstream, no este fork). **No se puede verificar desde aquí** qué repositorio/rama sirve, ni los logs. [P]
 
-## 7. Limitaciones y pendientes
-- ~67 % de las observaciones 2020–2026 con segmento arrastrado; jul–ago 2026 desde junio; las comparaciones por segmento en meses intermedios son aproximadas (usar el filtro "solo segmento exacto").
-- Panel excluye mutualistas y S4/S5; P&G, indicadores oficiales y CAMEL desde 2020; 2018–2019 sin P&G.
-- Solvencia mostrada = proxy; la regulatoria solo existe para S1/mutualistas/FINANCOOP. 20 observaciones con patrimonio total negativo (7 entidades, varias "EN LIQUIDACIÓN"), no depuradas.
-- Nombres con mojibake (p. ej. `BAÃ‘OS`) persisten en el balance; 331 observaciones 2020–21 sin fila en la dimensión (`balance_historico`).
-- Alerta temprana **no estimable** (8 cooperativas con evento y observaciones previas); las alertas de la app son desviaciones estadísticas internas, no umbrales regulatorios ni probabilidad de insolvencia. El índice de vulnerabilidad es exploratorio y se superpone parcialmente con CAMEL (Spearman −0,87): no sustituye al modelo CAMEL existente.
-- Despliegue remoto (Streamlit Cloud) y paso nuevo del workflow: **no verificados**. El PR #1 sigue sin fusionar; la corrida mensual usa `main`.
+## 10. Limitaciones y riesgos residuales
+1. [L] ~53 % del panel (65 % en 2020+) con segmento arrastrado; S4/S5 y mutualistas fuera del panel.
+2. [L] `balance.parquet` pesa 88,9 MB; GitHub rechaza archivos >100 MB y ya emite advertencia (>50 MB). Crece ~1 MB/mes: **riesgo a ≈10 meses**; requiere Git LFS o particionado. Responsable: dueño del repositorio.
+3. [L] Identidad por nombre (RUC solo para S1/mutualistas): cambios de razón social distintos del sufijo «EN LIQUIDACION» no se detectan.
+4. [L] 30 salidas del panel sin registro posterior no se interpretan como quiebras (posibles fusiones).
+5. [L] Capitalización = proxy (A−P)/A; la solvencia regulatoria solo existe para S1/mutualistas/FINANCOOP.
+6. [P] Fusión del PR #1 (requiere autorización expresa) y verificación en Streamlit Cloud (requiere acceso del propietario de la app).

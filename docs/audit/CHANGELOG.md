@@ -12,3 +12,6 @@
 - C-06 resuelto: identidad A = P + Pat + resultado YTD (ene–nov) y A = P + Pat (dic) exacta; `solvencia_proxy` = patrimonio total.
 - Nuevo `segmento_procedencia`; ~67 % del panel 2020–2026 usa segmento arrastrado.
 - Páginas 16–19 en Streamlit; `master_data/panel_vulnerabilidad.parquet`; expediente en `docs/cierre/`.
+
+## Sesión 6 (producción)
+- Merge de `main` (conflicto de datos) y restauración de la historia de solvencia; unificación de identidades (mojibake, sufijo EN LIQUIDACION); workflow seguro con validación estricta y pruebas; pruebas E2E con navegador. Ver `docs/cierre/INFORME_CIERRE.md`.
