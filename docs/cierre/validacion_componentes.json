@@ -55,7 +55,7 @@
   ],
   "fecha_max": "2026-09-30",
   "fecha_min": "2018-01-31",
-  "entidades": 259,
+  "entidades": 242,
   "entidades_ultimo_corte": 205,
   "entidades_por_segmento_ultimo_corte": {
    "SEGMENTO 1": 44,
@@ -67,7 +67,7 @@
   "inf_valor": 0
  },
  "dim_segmento_historico.parquet": {
-  "filas": 94404,
+  "filas": 94113,
   "duplicados_clave": 0,
   "clave": [
    "cooperativa",
@@ -75,7 +75,7 @@
   ],
   "fecha_max": "2026-09-30",
   "fecha_min": "2018-01-31",
-  "entidades": 1009,
+  "entidades": 995,
   "entidades_ultimo_corte": 205,
   "entidades_por_segmento_ultimo_corte": {
    "SEGMENTO 1": 44,
@@ -86,17 +86,17 @@
   "segmento_historico_nulo_pct": 0.0
  },
  "solvencia.parquet": {
-  "filas": 436,
+  "filas": 3646,
   "duplicados_clave": 0,
   "clave": [
    "ruc",
    "fecha"
   ],
   "fecha_max": "2026-09-30",
-  "fecha_min": "2026-01-31"
+  "fecha_min": "2020-01-31"
  },
  "entidades_cooperativas.parquet": {
-  "filas": 259,
+  "filas": 242,
   "duplicados_clave": 0,
   "clave": [
    "nombre"
@@ -105,11 +105,11 @@
  "balance.parquet": {
   "filas": 24873126,
   "fecha_max": "2026-09-30",
-  "entidades": 259,
+  "entidades": 242,
   "nulos_valor_pct": 0.0,
   "estimado_pct": 0.551,
-  "filas_corte_2026-09-30": 234116,
-  "entidades_por_segmento_2026-09-30": {
+  "filas_corte": 234116,
+  "entidades_por_segmento_corte": {
    "SEGMENTO 1": 44,
    "SEGMENTO 1 MUTUALISTA": 4,
    "SEGMENTO 2": 66,
@@ -158,8 +158,8 @@
   "entidades_trimestral:entidades_2025.zip/2025.txt": 10809,
   "entidades_trimestral:entidades_2024.zip/2024_EntidadesSF-TRIM/EntidadesSFPS_2024.xlsx": 10808,
   "entidades_trimestral:entidades_2021.zip/EntidadesSFPS_2021.xlsx": 10671,
-  "entidades_trimestral:entidades_2019.zip/EntidadesSFPS_2019.xlsx": 9558,
-  "entidades_trimestral:entidades_2018.zip/EntidadesSFPS_2018.xlsx": 9317,
+  "entidades_trimestral:entidades_2019.zip/EntidadesSFPS_2019.xlsx": 9428,
+  "entidades_trimestral:entidades_2018.zip/EntidadesSFPS_2018.xlsx": 9156,
   "entidades_trimestral:entidades_2026.zip/2026.txt": 5502,
   "2019-EEFF-MEN.zip": 1884,
   "2018-EEFF-MEN.zip": 1838,

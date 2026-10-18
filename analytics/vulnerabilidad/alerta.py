@@ -5,8 +5,15 @@ from sklearn.metrics import roc_auc_score, average_precision_score, brier_score_
 from . import config as C
 
 def tabla_eventos(P, ruta_eventos):
-    e = pd.read_csv(ruta_eventos, parse_dates=["fecha"])
-    e = e[e.cooperativa.isin(P.cooperativa.unique())]
+    """Evento = primera señal observable de liquidación/extinción: (a) estado jurídico EXTINTA / EN LIQUIDACION en la tabla
+    trimestral de entidades; (b) el nombre de la entidad pasa a llevar el sufijo «EN LIQUIDACION» en el balance. Se toma la
+    fecha más temprana por entidad. No se infieren quiebras de salidas sin registro."""
+    from .identidad import entidad_id
+    e = pd.read_csv(ruta_eventos, parse_dates=["fecha"]); e["cooperativa"] = e.cooperativa.map(entidad_id)
+    e = e[e.cooperativa.isin(P.cooperativa.unique())][["cooperativa", "fecha"]]
+    if "en_liquidacion_nombre" in P:
+        n = P[P.en_liquidacion_nombre].groupby("cooperativa").fecha.min().reset_index()
+        e = pd.concat([e, n], ignore_index=True)
     return e.groupby("cooperativa").fecha.min().rename("fecha_evento").reset_index()
 
 def construir_muestra(P, Z, E):

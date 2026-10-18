@@ -63,11 +63,23 @@ MUTUALISTAS_NOMBRES = {
 }
 
 
+def reparar_mojibake(texto: str) -> str:
+    """'CRÃ‰DITO' -> 'CRÉDITO' (UTF-8 leído como cp1252). Los bytes C1 sin mapa en cp1252
+    (0x81, 0x8D, 0x8F, 0x90, 0x9D) se toman tal cual (latin-1). Si no aplica, devuelve igual."""
+    if "Ã" not in texto and "Â" not in texto:
+        return texto
+    try:
+        crudo = b"".join(c.encode("cp1252") if c.encode("cp1252", "ignore") else c.encode("latin-1") for c in texto)
+        return crudo.decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return texto
+
+
 def normalizar_nombre(nombre: str) -> str:
     """Normaliza el nombre de la cooperativa."""
     if pd.isna(nombre):
         return ""
-    nombre = str(nombre).strip()
+    nombre = reparar_mojibake(str(nombre).strip())   # causa raíz: ZIP 2020-2021 leídos con otra codificación
 
     # Aplicar mapeo explícito de mutualistas primero
     if nombre.upper() in MUTUALISTAS_NOMBRES:

@@ -49,6 +49,22 @@ cb = s([c for c in cod_cart if c in set(B.codigo.unique())]); V['cartera_bruta']
 P = pd.DataFrame(V).fillna(0).reset_index()
 P = P.merge(seg, on=['cooperativa','fecha'], how='left').sort_values(['cooperativa','fecha'])
 P['cartera_bruta'] = P['cartera_bruta'].where(P['cartera_bruta']>0)
+# Procedencia del segmento por observación: exacto_mes (archivo SEPS del propio mes) / arrastrado (último corte <=2 meses) /
+# estimado (backfill) / balance_historico (valor ya acoplado en la ingesta, sin fila en la dimensión por diferencia de nombre).
+_dim = pd.read_parquet(repo+'dim_segmento_historico.parquet', columns=['cooperativa','fecha','es_arrastrado'])
+_dim['cooperativa'] = _dim.cooperativa.astype(str); _dim['fecha'] = pd.to_datetime(_dim.fecha)
+P = P.merge(_dim, on=['cooperativa','fecha'], how='left')
+P['segmento_procedencia'] = np.select([P.segmento_retroactivo, P.es_arrastrado.eq(True), P.es_arrastrado.eq(False)],
+                                      ['estimado','arrastrado','exacto_mes'], 'balance_historico')
+P = P.drop(columns=['es_arrastrado'])
+# Identidad estable: vincula «X» con «X EN LIQUIDACION» (misma entidad, fechas contiguas); conserva el nombre de la fuente.
+sys.path.insert(0, repo.rsplit('master_data/',1)[0])
+from analytics.vulnerabilidad.identidad import entidad_id, en_liquidacion_por_nombre
+P['cooperativa_fuente'] = P.cooperativa
+P['en_liquidacion_nombre'] = P.cooperativa.map(en_liquidacion_por_nombre)
+P['cooperativa'] = P.cooperativa.map(entidad_id)
+assert not P.duplicated(['cooperativa','fecha']).any(), 'la unificación por sufijo crearía duplicados coop-fecha'
+P = P.sort_values(['cooperativa','fecha']).reset_index(drop=True)
 # --- flujos mensuales y 12m a partir de saldos YTD (desacumulación; enero = YTD) ---
 def flujo(col):
     prev = P.groupby('cooperativa')[col].shift(1)
@@ -74,6 +90,7 @@ den = lambda a: a.where(a>0)
 # Por eso patrimonio/activos tiene un 'diente de sierra' anual; el proxy consistente usa patrimonio total = A - P.
 P['patrimonio_total'] = P.activos - P.pasivos
 P['solvencia_proxy'] = P.patrimonio_total/den(P.activos)*100
+P['patrimonio_negativo'] = P.patrimonio_total < 0
 P['solvencia_proxy_sin_resultado'] = P.patrimonio/den(P.activos)*100     # alterna (cód. 3 sin resultado del ejercicio)
 # Liquidez SEPS (metodología): fondos disponibles / depósitos a corto plazo (vista + 1-30d + 31-90d). Verificada: 100% exacta vs seps_LIQ.
 P['liquidez'] = P.fondos_disponibles/den(P.dep_corto)*100
@@ -99,14 +116,6 @@ P['crec_activos_12m'] = (P.activos/den(P.activos_l12)-1)*100
 P['ln_activos'] = np.log(den(P.activos))
 # diagnóstico (NO oficial)
 P['segmento_norma_activos'] = np.select([P.activos>80e6,P.activos>20e6,P.activos>5e6],['SEGMENTO 1','SEGMENTO 2','SEGMENTO 3'],'<=5M')
-# Procedencia del segmento por observación: exacto_mes (archivo SEPS del propio mes) / arrastrado (último corte <=2 meses) /
-# estimado (backfill) / balance_historico (valor ya acoplado en la ingesta, sin fila en la dimensión por diferencia de nombre).
-_dim = pd.read_parquet(repo+'dim_segmento_historico.parquet', columns=['cooperativa','fecha','es_arrastrado'])
-_dim['cooperativa'] = _dim.cooperativa.astype(str); _dim['fecha'] = pd.to_datetime(_dim.fecha)
-P = P.merge(_dim, on=['cooperativa','fecha'], how='left')
-P['segmento_procedencia'] = np.select([P.segmento_retroactivo, P.es_arrastrado.eq(True), P.es_arrastrado.eq(False)],
-                                      ['estimado','arrastrado','exacto_mes'], 'balance_historico')
-P = P.drop(columns=['es_arrastrado'])
 P = P.rename(columns={'segmento':'segmento_repo'})
 P = P.rename(columns={'segmento_retroactivo':'segmento_repo_retroactivo'})   # False = tomado de dim_segmento_historico (point-in-time)
 # --- eventos de salida (sólo observables: última fecha reportada) ---
@@ -116,7 +125,7 @@ P['ultima_obs'] = P.fecha.eq(P.cooperativa.map(fin)); P['dejo_de_reportar'] = P.
 I = pd.read_parquet(repo+'indicadores.parquet'); I = I[I.codigo.isin(['MOR_TOT','ROA','ROE','LIQ','COB_TOT','SUF_PAT'])]
 W = I.pivot_table(index=['cooperativa','fecha'],columns='codigo',values='valor',aggfunc='first').add_prefix('seps_').reset_index()
 W['cooperativa']=W.cooperativa.astype(str)
-P = P.merge(W,on=['cooperativa','fecha'],how='left')
+P = P.merge(W.rename(columns={'cooperativa':'cooperativa_fuente'}),on=['cooperativa_fuente','fecha'],how='left')   # indicadores usan el nombre de la fuente
 P = P.drop(columns=['ingresos_ytd','gastos_ytd','gastos_operacion_ytd','ingresos_oper_ytd','intereses_causados_ytd','provisiones_gasto_ytd','activos_l12','patrimonio_l12','cartera_neta_14'])
 P.to_parquet(out+'panel_cooperativas_S1S3.parquet',index=False); P.to_csv(out+'panel_cooperativas_S1S3.csv.gz',index=False)
 # --- reporte de calidad ---

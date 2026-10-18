@@ -11,7 +11,7 @@ def _tabla(res, claves):
     return {c: {"coef": float(res.params[c]), "ee": float(res.bse[c]), "p": float(res.pvalues[c]),
                 "ic95": [float(ci.loc[c, 0]), float(ci.loc[c, 1])]} for c in claves if c in res.params}
 
-def estimar(P: pd.DataFrame, I: pd.DataFrame) -> dict:
+def estimar(P: pd.DataFrame, I: pd.DataFrame, rezago: bool = True) -> dict:
     d = P.merge(I[["cooperativa", "fecha", "indice_eq"]], on=["cooperativa", "fecha"])
     d = d.sort_values(["cooperativa", "fecha"])
     d["crec"] = d.crec_activos_12m.clip(*d.crec_activos_12m.quantile([.01, .99]))
@@ -34,10 +34,11 @@ def estimar(P: pd.DataFrame, I: pd.DataFrame) -> dict:
     wald = m3.wald_test("crec:s2 = 0, crec:s3 = 0", scalar=True)
     out["M3_wald_heterogeneidad"] = {"estadistico": float(wald.statistic), "p": float(wald.pvalue)}
     # Rezago: ¿el crecimiento pasado predice vulnerabilidad futura (t+12)? sin FE de tiempo cuestionable -> con FE
-    d["I_f12"] = d.groupby("cooperativa").indice_eq.shift(-12)
-    d2 = d.dropna(subset=["I_f12"])
-    m4 = _fit(d2, "I_f12 ~ indice_eq + crec + ln_activos + C(cooperativa) + C(f)")
-    out["M4_I_t+12"] = _tabla(m4, ["indice_eq", "crec", "ln_activos"]); out["M4_n"] = int(len(d2))
+    if rezago:   # lead de 12 meses POR FECHA (no por posición), válido aunque haya huecos en la serie
+        fut = d[["cooperativa", "fecha", "indice_eq"]].copy(); fut["fecha"] = fut.fecha - pd.offsets.MonthEnd(12)
+        d2 = d.merge(fut.rename(columns={"indice_eq": "I_f12"}), on=["cooperativa", "fecha"], how="inner")
+        m4 = _fit(d2, "I_f12 ~ indice_eq + crec + ln_activos + C(cooperativa) + C(f)")
+        out["M4_I_t+12"] = _tabla(m4, ["indice_eq", "crec", "ln_activos"]); out["M4_n"] = int(len(d2))
     out["nota"] = ("Errores agrupados por cooperativa. Con efectos fijos de entidad, el coeficiente de segmento "
                    "proviene solo de reclasificaciones; no es una comparación entre entidades.")
     return out

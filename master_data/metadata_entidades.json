@@ -1,9 +1,9 @@
 {
-  "fecha_procesamiento": "2026-10-18T05:45:49.516826",
-  "entidades_totales": 259,
-  "con_ruc": 48,
+  "fecha_procesamiento": "2026-10-18T15:01:42.835148",
+  "entidades_totales": 242,
+  "con_ruc": 51,
   "activas": 206,
-  "posible_salida": 46,
+  "posible_salida": 29,
   "liquidacion_declarada": 7,
   "con_cambio_de_segmento_detectado": 73,
   "cobertura_ruc": "RUC disponible solo para entidades en master_data/solvencia.parquet (Segmento 1, Mutualistas, FINANCOOP). Segmento 2/3: ruc=NULL."

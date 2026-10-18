@@ -1,6 +1,6 @@
 """Uso: python -m analytics.vulnerabilidad.run_all <panel.parquet> <dir_salida>"""
 import sys, json, pandas as pd
-from . import config as C, indice, panel_fe, alerta
+from . import config as C, indice, panel_fe, alerta, cobertura
 
 def main(panel, out, exportar_app=None):
     P = pd.read_parquet(panel); P = P[P.segmento_repo.isin(C.SEGMENTOS)].reset_index(drop=True)
@@ -10,6 +10,8 @@ def main(panel, out, exportar_app=None):
     desc = d.groupby("segmento_repo").indice_eq.describe()[["count", "mean", "50%", "std"]]
     res["indice_por_segmento"] = desc.round(4).to_dict("index")
     res["panel_fe"] = panel_fe.estimar(P, I)
+    cobertura.tabla_cobertura(P).to_csv(out + "cobertura_segmentos.csv", index=False)
+    res["sensibilidad_segmento_exacto"] = cobertura.sensibilidad(P, I)
     E = alerta.tabla_eventos(P, C.EVENTOS_CSV)
     res["n_eventos_en_panel"] = int(len(E))
     S = alerta.construir_muestra(P, Z, E)
