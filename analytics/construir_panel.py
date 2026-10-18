@@ -70,7 +70,11 @@ def lag12(col):
 P['activos_l12'] = lag12('activos'); P['patrimonio_l12']=lag12('patrimonio')
 P = P.reset_index()
 den = lambda a: a.where(a>0)
-P['solvencia_proxy'] = P.patrimonio/den(P.activos)*100
+# Identidad verificada: A = P + Pat + resultado YTD (ene-nov); en diciembre el resultado ya está cerrado dentro de Pat (A = P + Pat).
+# Por eso patrimonio/activos tiene un 'diente de sierra' anual; el proxy consistente usa patrimonio total = A - P.
+P['patrimonio_total'] = P.activos - P.pasivos
+P['solvencia_proxy'] = P.patrimonio_total/den(P.activos)*100
+P['solvencia_proxy_sin_resultado'] = P.patrimonio/den(P.activos)*100     # alterna (cód. 3 sin resultado del ejercicio)
 # Liquidez SEPS (metodología): fondos disponibles / depósitos a corto plazo (vista + 1-30d + 31-90d). Verificada: 100% exacta vs seps_LIQ.
 P['liquidez'] = P.fondos_disponibles/den(P.dep_corto)*100
 P['liquidez_vista'] = P.fondos_disponibles/den(P.dep_vista)*100   # alterna (no oficial)
@@ -95,6 +99,14 @@ P['crec_activos_12m'] = (P.activos/den(P.activos_l12)-1)*100
 P['ln_activos'] = np.log(den(P.activos))
 # diagnóstico (NO oficial)
 P['segmento_norma_activos'] = np.select([P.activos>80e6,P.activos>20e6,P.activos>5e6],['SEGMENTO 1','SEGMENTO 2','SEGMENTO 3'],'<=5M')
+# Procedencia del segmento por observación: exacto_mes (archivo SEPS del propio mes) / arrastrado (último corte <=2 meses) /
+# estimado (backfill) / balance_historico (valor ya acoplado en la ingesta, sin fila en la dimensión por diferencia de nombre).
+_dim = pd.read_parquet(repo+'dim_segmento_historico.parquet', columns=['cooperativa','fecha','es_arrastrado'])
+_dim['cooperativa'] = _dim.cooperativa.astype(str); _dim['fecha'] = pd.to_datetime(_dim.fecha)
+P = P.merge(_dim, on=['cooperativa','fecha'], how='left')
+P['segmento_procedencia'] = np.select([P.segmento_retroactivo, P.es_arrastrado.eq(True), P.es_arrastrado.eq(False)],
+                                      ['estimado','arrastrado','exacto_mes'], 'balance_historico')
+P = P.drop(columns=['es_arrastrado'])
 P = P.rename(columns={'segmento':'segmento_repo'})
 P = P.rename(columns={'segmento_retroactivo':'segmento_repo_retroactivo'})   # False = tomado de dim_segmento_historico (point-in-time)
 # --- eventos de salida (sólo observables: última fecha reportada) ---

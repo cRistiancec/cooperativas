@@ -7,3 +7,8 @@
 - Panel: liquidez (11/(2101+210305+210310)) y ROA/ROE (YTD anualizado, promedio desde dic. previo) reconcilian con SEPS; 12m/solo-vista quedan como alternas.
 - Nuevo módulo `analytics/vulnerabilidad/` (índice, panel FE, alerta exploratoria), tests y `docs/VULNERABILIDAD_MODULO.md`.
 - Alerta temprana declarada no estimable (8 cooperativas con evento y observaciones previas).
+
+## Sesión 5 (cierre)
+- C-06 resuelto: identidad A = P + Pat + resultado YTD (ene–nov) y A = P + Pat (dic) exacta; `solvencia_proxy` = patrimonio total.
+- Nuevo `segmento_procedencia`; ~67 % del panel 2020–2026 usa segmento arrastrado.
+- Páginas 16–19 en Streamlit; `master_data/panel_vulnerabilidad.parquet`; expediente en `docs/cierre/`.

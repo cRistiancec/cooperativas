@@ -10,7 +10,7 @@ Reproducir: `python analytics/construir_panel.py . <dir>` y luego `python -m ana
 | Liquidez | fondos disponibles (11) / (2101+210305+210310) | exacta (n=14.590) |
 | Morosidad, cobertura | cartera improductiva / bruta; provisiones / improductiva | exactas |
 | ROA, ROE | resultado YTD ×12/m ÷ promedio de saldos fin de mes (dic. previo..m) | corr 0,9997 / 0,9985; mediana dif. 0 |
-| Solvencia (proxy), eficiencia | patrimonio/activos; gasto operación/ingreso operativo 12m | no reconciliadas |
+| Solvencia (proxy), eficiencia | (activos − pasivos)/activos [incluye resultado del ejercicio]; gasto operación/ingreso operativo 12m | no reconciliadas (proxy ≠ solvencia regulatoria) |
 
 ROA/ROE a 12 meses y liquidez solo-vista se conservan como alternas (corr 0,71 y 0,38 con SEPS): no usarlas como oficiales.
 
@@ -19,10 +19,10 @@ Z_k orientado (alto = más vulnerable), winsorización 1–99 % pooled, pesos ig
 
 ## Panel con efectos fijos (entidad + mes, errores agrupados por cooperativa)
 n = 15.601 obs., 242 cooperativas, 60 con reclasificación dentro de S1–S3 (de ellas se identifica el efecto segmento).
-- Crecimiento de activos 12m reduce el índice (−0,0054; p<0,001): en parte mecánico (ROA, solvencia y morosidad responden al denominador). No es causal.
-- Segmento 2 vs 1: −0,17 (p=0,026); segmento 3 vs 1: −0,14 (p=0,13). Frágil.
-- Heterogeneidad del efecto del crecimiento por segmento: Wald p=0,95 (no se rechaza homogeneidad).
-- Persistencia: coef. del índice a t+12 = 0,27 (p<0,001) con FE.
+- Crecimiento de activos 12m reduce el índice (−0,0056; p<0,001): en parte mecánico (ROA, solvencia y morosidad responden al denominador). No es causal.
+- Segmento 2 vs 1: −0,17 (p=0,027); segmento 3 vs 1: no significativo (p=0,13). Frágil.
+- Heterogeneidad del efecto del crecimiento por segmento: Wald p=0,92 (no se rechaza homogeneidad).
+- Persistencia: coef. del índice a t+12 = 0,26 (p<0,001) con FE.
 
 ## Alerta temprana: NO estimable con rigor
 Solo 16 cooperativas con estado jurídico EXTINTA/EN LIQUIDACIÓN pasan al panel, y solo 8 tienen observaciones en los 12 meses previos (la mayoría de los eventos ocurre en 2018–2020). Con orígenes temporales rodantes (2020-12 a 2023-06) ninguno cumple el mínimo de ≥3 cooperativas con evento en entrenamiento y ≥2 en prueba. Un AUC alto con un solo evento en prueba (p. ej. 0,98 con origen 2020-12) no es evidencia y no se reporta como resultado. XGBoost no está justificado. Vías para mejorar: confirmar las 30 salidas sin registro posterior (fusiones/absorciones), ampliar a S4–S5 y definir eventos con criterios regulatorios (plan de regularización, intervención).

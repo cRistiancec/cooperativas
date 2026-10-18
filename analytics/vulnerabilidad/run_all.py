@@ -2,7 +2,7 @@
 import sys, json, pandas as pd
 from . import config as C, indice, panel_fe, alerta
 
-def main(panel, out):
+def main(panel, out, exportar_app=None):
     P = pd.read_parquet(panel); P = P[P.segmento_repo.isin(C.SEGMENTOS)].reset_index(drop=True)
     I, Z, sens = indice.construir(P)
     res = {"indice_sensibilidad": sens}
@@ -18,8 +18,11 @@ def main(panel, out):
     res["eventos_fecha"] = {r.cooperativa: str(r.fecha_evento.date()) for r in E.itertuples()}
     res["eventos_con_obs_previas_12m"] = int(S[S.y == 1].cooperativa.nunique())
     I.to_parquet(out + "indice_vulnerabilidad.parquet", index=False)
+    if exportar_app:   # artefacto compacto que consume Streamlit (evita recalcular en cada interacción)
+        X = P.merge(I[["cooperativa", "fecha", "indice_eq", "indice_pca"]], on=["cooperativa", "fecha"], how="left")
+        X.to_parquet(exportar_app, index=False)
     json.dump(res, open(out + "resultados_vulnerabilidad.json", "w"), indent=1, ensure_ascii=False)
     print(json.dumps(res, indent=1, ensure_ascii=False))
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2].rstrip("/") + "/")
+    main(sys.argv[1], sys.argv[2].rstrip("/") + "/", sys.argv[3] if len(sys.argv) > 3 else None)

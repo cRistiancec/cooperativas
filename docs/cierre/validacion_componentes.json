@@ -1,0 +1,192 @@
+{
+ "pyg.parquet": {
+  "filas": 2476736,
+  "duplicados_clave": 0,
+  "clave": [
+   "cooperativa",
+   "fecha",
+   "codigo"
+  ],
+  "fecha_max": "2026-09-30",
+  "fecha_min": "2020-01-31",
+  "entidades": 242,
+  "entidades_ultimo_corte": 209,
+  "entidades_por_segmento_ultimo_corte": {
+   "SEGMENTO 1": 45,
+   "SEGMENTO 1 MUTUALISTA": 5,
+   "SEGMENTO 2": 67,
+   "SEGMENTO 3": 92
+  },
+  "nulos_valor_acumulado_pct": 0.0,
+  "inf_valor_acumulado": 0,
+  "estimado_pct": 1.463,
+  "segmento_historico_nulo_pct": 0.0
+ },
+ "indicadores.parquet": {
+  "filas": 628732,
+  "duplicados_clave": 0,
+  "clave": [
+   "cooperativa",
+   "fecha",
+   "codigo"
+  ],
+  "fecha_max": "2026-09-30",
+  "fecha_min": "2020-01-31",
+  "entidades": 231,
+  "entidades_ultimo_corte": 205,
+  "entidades_por_segmento_ultimo_corte": {
+   "SEGMENTO 1": 44,
+   "SEGMENTO 1 MUTUALISTA": 4,
+   "SEGMENTO 2": 66,
+   "SEGMENTO 3": 91
+  },
+  "nulos_valor_pct": 0.0,
+  "inf_valor": 0,
+  "estimado_pct": 0.665,
+  "segmento_historico_nulo_pct": 0.0
+ },
+ "agg_series_temporales.parquet": {
+  "filas": 152936,
+  "duplicados_clave": 0,
+  "clave": [
+   "cooperativa",
+   "fecha",
+   "codigo"
+  ],
+  "fecha_max": "2026-09-30",
+  "fecha_min": "2018-01-31",
+  "entidades": 259,
+  "entidades_ultimo_corte": 205,
+  "entidades_por_segmento_ultimo_corte": {
+   "SEGMENTO 1": 44,
+   "SEGMENTO 1 MUTUALISTA": 4,
+   "SEGMENTO 2": 66,
+   "SEGMENTO 3": 91
+  },
+  "nulos_valor_pct": 0.0,
+  "inf_valor": 0
+ },
+ "dim_segmento_historico.parquet": {
+  "filas": 94404,
+  "duplicados_clave": 0,
+  "clave": [
+   "cooperativa",
+   "fecha"
+  ],
+  "fecha_max": "2026-09-30",
+  "fecha_min": "2018-01-31",
+  "entidades": 1009,
+  "entidades_ultimo_corte": 205,
+  "entidades_por_segmento_ultimo_corte": {
+   "SEGMENTO 1": 44,
+   "SEGMENTO 1 MUTUALISTA": 4,
+   "SEGMENTO 2": 66,
+   "SEGMENTO 3": 91
+  },
+  "segmento_historico_nulo_pct": 0.0
+ },
+ "solvencia.parquet": {
+  "filas": 436,
+  "duplicados_clave": 0,
+  "clave": [
+   "ruc",
+   "fecha"
+  ],
+  "fecha_max": "2026-09-30",
+  "fecha_min": "2026-01-31"
+ },
+ "entidades_cooperativas.parquet": {
+  "filas": 259,
+  "duplicados_clave": 0,
+  "clave": [
+   "nombre"
+  ]
+ },
+ "balance.parquet": {
+  "filas": 24873126,
+  "fecha_max": "2026-09-30",
+  "entidades": 259,
+  "nulos_valor_pct": 0.0,
+  "estimado_pct": 0.551,
+  "filas_corte_2026-09-30": 234116,
+  "entidades_por_segmento_2026-09-30": {
+   "SEGMENTO 1": 44,
+   "SEGMENTO 1 MUTUALISTA": 4,
+   "SEGMENTO 2": 66,
+   "SEGMENTO 3": 91
+  },
+  "duplicados_clave_2026": 0
+ },
+ "segmentacion_meses_recientes": {
+  "2026-02-28": {
+   "entidades": 918,
+   "pct_arrastrado": 100.0
+  },
+  "2026-03-31": {
+   "entidades": 917,
+   "pct_arrastrado": 0.0
+  },
+  "2026-04-30": {
+   "entidades": 917,
+   "pct_arrastrado": 100.0
+  },
+  "2026-05-31": {
+   "entidades": 917,
+   "pct_arrastrado": 100.0
+  },
+  "2026-06-30": {
+   "entidades": 917,
+   "pct_arrastrado": 0.0
+  },
+  "2026-07-31": {
+   "entidades": 917,
+   "pct_arrastrado": 100.0
+  },
+  "2026-08-31": {
+   "entidades": 917,
+   "pct_arrastrado": 100.0
+  },
+  "2026-09-30": {
+   "entidades": 205,
+   "pct_arrastrado": 0.0
+  }
+ },
+ "segmentacion_fuentes": {
+  "entidades_trimestral:entidades_2020.zip/EntidadesSFPS_2020.xlsx": 10845,
+  "entidades_trimestral:entidades_2022.zip/2022_EntidadesSF-TRIM/EntidadesSFPS_2022.xlsx": 10832,
+  "entidades_trimestral:entidades_2023.zip/2023_EntidadesSF-TRIM/EntidadesSFPS_2023.xlsx": 10813,
+  "entidades_trimestral:entidades_2025.zip/2025.txt": 10809,
+  "entidades_trimestral:entidades_2024.zip/2024_EntidadesSF-TRIM/EntidadesSFPS_2024.xlsx": 10808,
+  "entidades_trimestral:entidades_2021.zip/EntidadesSFPS_2021.xlsx": 10671,
+  "entidades_trimestral:entidades_2019.zip/EntidadesSFPS_2019.xlsx": 9558,
+  "entidades_trimestral:entidades_2018.zip/EntidadesSFPS_2018.xlsx": 9317,
+  "entidades_trimestral:entidades_2026.zip/2026.txt": 5502,
+  "2019-EEFF-MEN.zip": 1884,
+  "2018-EEFF-MEN.zip": 1838,
+  "2021-EEFF-MEN.zip": 348,
+  "2025_EEFF-Men.zip": 208,
+  "2023_EEFF-Men.zip": 205,
+  "2024_EEFF-Men.zip": 205,
+  "2026_EEFF-Men.zip": 205,
+  "2022_EEFF-Men.zip": 187,
+  "2020-EEFF-MEN.zip": 169
+ },
+ "segmentacion_cortes_origen_ultimos_meses": {
+  "2026-05-31": "2026-03-31",
+  "2026-06-30": "2026-06-30",
+  "2026-07-31": "2026-06-30",
+  "2026-08-31": "2026-06-30",
+  "2026-09-30": "2026-09-30"
+ },
+ "consistencia_entidades_2026-09-30": {
+  "pyg": 209,
+  "indicadores": 205,
+  "dim_segmento": 205,
+  "balance": {
+   "SEGMENTO 1": 44,
+   "SEGMENTO 1 MUTUALISTA": 4,
+   "SEGMENTO 2": 66,
+   "SEGMENTO 3": 91
+  }
+ }
+}

@@ -123,6 +123,19 @@ jobs:
         continue-on-error: true
         run: python scripts/generar_entidades.py
 
+      # Panel cooperativa-mes S1-S3 + índice de vulnerabilidad que consume Streamlit.
+      # Best-effort: un fallo aquí no debe bloquear la publicación de los datos base.
+      - name: Regenerar panel de vulnerabilidad (S1-S3)
+        id: panel
+        if: steps.descarga.outputs.datos_nuevos == 'true'
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/panel"
+          python analytics/construir_panel.py . "$RUNNER_TEMP/panel"
+          python -m analytics.vulnerabilidad.run_all "$RUNNER_TEMP/panel/panel_cooperativas_S1S3.parquet" reports/vulnerabilidad master_data/panel_vulnerabilidad.parquet
+          cp "$RUNNER_TEMP/panel/calidad_panel.json" reports/vulnerabilidad/calidad_panel.json
+          python scripts/validar_cierre.py
+
       # Validación CRÍTICA: si falla, el job debe terminar en FAILED (sin
       # continue-on-error) — nunca se publica un resultado "aparentemente
       # actualizado" si el balance/PyG/CAMEL no pasaron esta validación.
@@ -202,6 +215,7 @@ jobs:
           # puede no haber generado el archivo, p. ej. sin ZIP nuevo de
           # Patrimonio Técnico) — no deben tumbar el commit si faltan.
           git add master_data/solvencia.parquet master_data/entidades_cooperativas.parquet 2>/dev/null || true
+          git add master_data/panel_vulnerabilidad.parquet reports/vulnerabilidad docs/cierre/validacion_componentes.json 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No hay cambios en los datos. Nada que commitear."
