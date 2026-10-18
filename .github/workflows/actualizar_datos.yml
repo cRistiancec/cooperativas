@@ -71,6 +71,13 @@ jobs:
       # CRÍTICO: el segmento oficial de cada mes (columna SEGMENTO de los archivos
       # SEPS) debe quedar acoplado en master_data/dim_segmento_historico.parquet.
       # Falla si hay meses sin segmento, duplicados o etiquetas inválidas.
+      # Segmento point-in-time de los meses sin archivo mensual con SEGMENTO: se toma
+      # del registro oficial "Entidades trimestral" del portal SEPS (fuente, sin
+      # archivos externos) y se arrastra desde el último corte <= mes.
+      - name: Actualizar segmento desde Entidades trimestral (portal SEPS)
+        if: steps.descarga.outputs.datos_nuevos == 'true'
+        run: python scripts/segmento_historico.py --actualizar-entidades
+
       - name: Verificar segmento histórico acoplado
         if: steps.descarga.outputs.datos_nuevos == 'true'
         run: python scripts/segmento_historico.py --verificar
@@ -187,7 +194,8 @@ jobs:
             master_data/indicadores.parquet \
             master_data/agg_*.parquet \
             master_data/metadata*.json \
-            master_data/dim_segmento_historico.parquet
+            master_data/dim_segmento_historico.parquet \
+            master_data/entidades_trimestral.parquet
           git add master_data/dim_segmento_historico_cambios.json 2>/dev/null || true
 
           # Solvencia FS01 y tabla de identidad son best-effort (paso previo

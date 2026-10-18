@@ -209,3 +209,49 @@ class AcoplarYValidarTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FuenteTrimestralTests(unittest.TestCase):
+    """Registro oficial 'Entidades trimestral': arrastre point-in-time y sin mirar al futuro."""
+
+    def _cortes(self):
+        return pd.DataFrame({
+            "cooperativa": ["A", "A", "B"],
+            "fecha": pd.to_datetime(["2020-03-31", "2020-06-30", "2020-03-31"]),
+            "segmento_historico": ["SEGMENTO 3", "SEGMENTO 2", "SEGMENTO 1"],
+        })
+
+    def test_arrastre_no_usa_cortes_futuros(self):
+        m = sh.expandir_cortes_a_mensual(self._cortes(), hasta=pd.Timestamp("2020-08-31"))
+        a = m[m.cooperativa == "A"].set_index("fecha")
+        self.assertEqual(a.loc["2020-04-30", "segmento_historico"], "SEGMENTO 3")  # aún no cambia
+        self.assertEqual(a.loc["2020-06-30", "segmento_historico"], "SEGMENTO 2")
+        self.assertTrue(a.loc["2020-04-30", "es_arrastrado"])
+        self.assertFalse(a.loc["2020-03-31", "es_arrastrado"])
+
+    def test_arrastre_tiene_tope(self):
+        m = sh.expandir_cortes_a_mensual(self._cortes(), hasta=pd.Timestamp("2020-12-31"))
+        b = m[m.cooperativa == "B"]
+        self.assertEqual(b.fecha.max(), pd.Timestamp("2020-05-31"))  # 2 meses tras el corte
+
+    def test_dato_exacto_gana_y_se_reportan_discrepancias(self):
+        exacto = sh.construir_dim(pd.DataFrame({
+            "cooperativa": ["A"], "fecha": pd.to_datetime(["2020-04-30"]),
+            "segmento_historico": ["SEGMENTO 2"]}), "x")
+        tri = sh.expandir_cortes_a_mensual(self._cortes(), hasta=pd.Timestamp("2020-06-30"))
+        dim, diag = sh.combinar_exacto_y_trimestral(exacto, tri)
+        fila = dim[(dim.cooperativa == "A") & (dim.fecha == "2020-04-30")]
+        self.assertEqual(fila.segmento_historico.iloc[0], "SEGMENTO 2")
+        self.assertEqual(diag["discrepancias_exacto_vs_trimestral"], 1)
+
+    def test_sin_segmento_no_entra_y_desconocido_falla(self):
+        ok = "FECHA_CORTE\tRUC\tRAZON_SOCIAL\tSEGMENTO\tESTADO_JURIDICO\n31/03/2025\t1\tX LTDA\tSIN SEGMENTO\tEXTINTA\n"
+        out = sh.leer_entidades_txt(ok, "t")
+        self.assertTrue(out.segmento_historico.isna().all())
+        mal = ok.replace("SIN SEGMENTO", "SEGMENTO 9")
+        with self.assertRaises(sh.SegmentoInvalidoError):
+            sh.leer_entidades_txt(mal, "t")
+
+    def test_reparar_mojibake(self):
+        self.assertEqual(sh.reparar_mojibake("CRÃ‰DITO"), "CRÉDITO")
+        self.assertEqual(sh.reparar_mojibake("CREDITO"), "CREDITO")

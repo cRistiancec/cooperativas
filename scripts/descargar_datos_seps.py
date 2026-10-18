@@ -72,26 +72,21 @@ def extraer_download_id(html: str, anio: int, panel_texto: str = "estados financ
     "patrimonio técnico") para otras fuentes publicadas en el mismo portal.
     """
     soup = BeautifulSoup(html, "html.parser")
-    seccion = None
-    for h5 in soup.find_all("h5"):
-        if panel_texto in h5.get_text(strip=True).lower():
-            panel = h5.find_parent("div", class_="panel")
-            seccion = panel if panel is not None else h5.parent
-            break
-
-    if seccion is None:
-        return None
-
-    # Buscar enlace con download_id cuyo texto sea el año
     anio_str = str(anio)
-    for a in seccion.find_all("a", href=True):
-        href = a["href"]
-        texto = a.get_text(strip=True)
-        if anio_str in texto and "download_id" in href:
-            # Extraer el download_id
-            match = re.search(r"download_id=(\d+)", href)
-            if match:
-                return match.group(1)
+    # El portal repite el mismo encabezado en varios paneles (p. ej. 2020-2026
+    # en uno y 2018-2019 en otro): se recorren todos los que coinciden.
+    for h5 in soup.find_all("h5"):
+        if panel_texto not in h5.get_text(strip=True).lower():
+            continue
+        panel = h5.find_parent("div", class_="panel")
+        seccion = panel if panel is not None else h5.parent
+        for a in seccion.find_all("a", href=True):
+            href = a["href"]
+            texto = a.get_text(strip=True)
+            if anio_str in texto and "download_id" in href:
+                match = re.search(r"download_id=(\d+)", href)
+                if match:
+                    return match.group(1)
 
     return None
 
@@ -199,6 +194,26 @@ def descargar_zip(download_id: str, destino: Path) -> bool:
         if destino.exists():
             destino.unlink()  # Eliminar archivo parcial
         return False
+
+
+ENTIDADES_DIR = BASE_DIR / "entidades_trimestral"
+
+
+def descargar_entidades_trimestral(anio: int, html: str | None = None) -> Path | None:
+    """Descarga el registro oficial 'Entidades trimestral' del año (TXT dentro de un
+    ZIP: FECHA_CORTE, RUC, RAZON_SOCIAL, SEGMENTO, ESTADO_JURIDICO...). Es la fuente
+    de segmento point-in-time para los meses sin archivo mensual con SEGMENTO.
+    Devuelve la ruta del ZIP o None si el portal aún no lo publica."""
+    did = scrape_download_id(anio, panel_texto="entidades trimestral", html=html)
+    if did is None:
+        return None
+    ENTIDADES_DIR.mkdir(exist_ok=True)
+    destino = ENTIDADES_DIR / f"entidades_{anio}.zip"
+    tmp = destino.with_suffix(".tmp")
+    if not descargar_zip(did, tmp):
+        return None
+    tmp.replace(destino)
+    return destino
 
 
 def hay_datos_nuevos(anio: int, mes_actual: int) -> bool:
