@@ -507,7 +507,7 @@ def generar_balance_parquet():
     print(f"segmento_historico estimado (no point-in-time real): {pct_estimado:.1f}% de registros")
 
     # Guardar parquet
-    guardar_parquet_atomico(df_final, output_path, engine='pyarrow', compression='snappy')
+    guardar_parquet_atomico(df_final, output_path, engine='pyarrow', compression='zstd')
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     print(f"\nArchivo generado: {output_path}")

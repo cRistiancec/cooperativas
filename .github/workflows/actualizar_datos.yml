@@ -155,6 +155,13 @@ jobs:
           python -m analytics.vulnerabilidad.run_all "$RUNNER_TEMP/panel/panel_cooperativas_S1S3.parquet" reports/vulnerabilidad master_data/panel_vulnerabilidad.parquet
           cp "$RUNNER_TEMP/panel/calidad_panel.json" reports/vulnerabilidad/calidad_panel.json
 
+      # Reduce el peso de master_data/ (orden físico + zstd) sin pérdida de datos. Verifica bit a bit
+      # contra el original antes de reemplazar; un fallo es bloqueante.
+      - name: Optimizar peso de los Parquet (lossless)
+        id: optimizar
+        if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
+        run: python scripts/optimizar_parquet.py
+
       - name: Validación estricta de componentes (corte, claves, segmentos)
         id: validacion_estricta
         if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
@@ -227,7 +234,7 @@ jobs:
           SIZE=$(stat -c%s master_data/balance.parquet 2>/dev/null || echo 0)
           LIMIT=$((95 * 1024 * 1024))
           if [ "$SIZE" -gt "$LIMIT" ]; then
-            echo "::warning::balance.parquet supera 95 MB ($((SIZE / 1024 / 1024)) MB). Considerar compresión adicional."
+            echo "::warning::balance.parquet supera 95 MB ($((SIZE / 1024 / 1024)) MB). Considerar Git LFS o particionar por año."
           fi
 
       # 8. Configurar git y hacer commit + push

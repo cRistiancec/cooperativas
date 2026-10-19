@@ -188,5 +188,20 @@
    "SEGMENTO 2": 66,
    "SEGMENTO 3": 91
   }
+ },
+ "pesos_mb": {
+  "agg_catalogo_cooperativas.parquet": 0.01,
+  "agg_metricas_sistema.parquet": 0.04,
+  "agg_metricas_sistema_historico.parquet": 0.04,
+  "agg_ranking_cooperativas.parquet": 1.13,
+  "agg_series_temporales.parquet": 1.05,
+  "balance.parquet": 33.24,
+  "dim_segmento_historico.parquet": 0.03,
+  "entidades_cooperativas.parquet": 0.01,
+  "entidades_trimestral.parquet": 0.06,
+  "indicadores.parquet": 3.75,
+  "panel_vulnerabilidad.parquet": 6.16,
+  "pyg.parquet": 14.92,
+  "solvencia.parquet": 0.2
  }
 }

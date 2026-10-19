@@ -170,7 +170,7 @@ def upsert_dim(nuevo: pd.DataFrame, ruta: Path = DIM_PATH, log_path: Path = LOG_
     assert not final.duplicated(["cooperativa", "fecha"]).any()
     final = final.sort_values(["fecha", "cooperativa"]).reset_index(drop=True)
     ruta.parent.mkdir(parents=True, exist_ok=True)
-    guardar_parquet_atomico(final, ruta, engine="pyarrow", compression="snappy")
+    guardar_parquet_atomico(final, ruta, engine="pyarrow", compression="zstd")
     historial = json.loads(Path(log_path).read_text(encoding="utf-8")) if Path(log_path).exists() else []
     if resumen["revisiones_de_segmento"] or resumen["filas_retiradas"]:
         historial.append(resumen)
@@ -195,7 +195,7 @@ def rehidratar(directorio_zips: Path, ruta: Path = DIM_PATH) -> pd.DataFrame:
             raise SegmentoInvalidoError("El mismo mes aparece en dos ZIP con segmentos distintos.")
         dim = dim.drop_duplicates(["cooperativa", "fecha"], keep="last")
     guardar_parquet_atomico(dim.sort_values(["fecha", "cooperativa"]).reset_index(drop=True),
-                            Path(ruta), engine="pyarrow", compression="snappy")
+                            Path(ruta), engine="pyarrow", compression="zstd")
     return dim
 
 
@@ -338,7 +338,7 @@ def rehidratar_desde_fuente(dir_mensuales: Path, dir_entidades: Path, ruta: Path
     cortes.to_parquet(Path(ruta).parent / "entidades_trimestral.parquet", index=False)
     tri = expandir_cortes_a_mensual(cortes, hasta=max(exacto['fecha'].max(), cortes['fecha'].max()))
     dim, diag = combinar_exacto_y_trimestral(exacto, tri)
-    guardar_parquet_atomico(dim, Path(ruta), engine="pyarrow", compression="snappy")
+    guardar_parquet_atomico(dim, Path(ruta), engine="pyarrow", compression="zstd")
     Path(ruta).with_suffix(".exacto.parquet").unlink(missing_ok=True)
     diag.update(filas=int(len(dim)), arrastradas=int(dim["es_arrastrado"].sum()),
                 cortes_entidades=int(cortes["fecha"].nunique()))
@@ -374,7 +374,7 @@ def actualizar_entidades(anios: list[int] | None = None, ruta: Path = DIM_PATH) 
     cortes.to_parquet(Path(ruta).parent / "entidades_trimestral.parquet", index=False)
     tri = expandir_cortes_a_mensual(cortes, hasta=max(dim_prev["fecha"].max(), cortes["fecha"].max()))
     dim, diag = combinar_exacto_y_trimestral(exacto, tri)
-    guardar_parquet_atomico(dim, Path(ruta), engine="pyarrow", compression="snappy")
+    guardar_parquet_atomico(dim, Path(ruta), engine="pyarrow", compression="zstd")
     diag.update(filas=int(len(dim)), cortes_entidades=int(cortes["fecha"].nunique()))
     return diag
 
@@ -486,7 +486,7 @@ def _acoplar_parquet_streaming(pq_path: Path, dim: pd.DataFrame, nombre: str,
     esquema_out = esquema.append(pa.field("segmento_historico", cat_tipo)) \
                          .append(pa.field("segmento_historico_estimado", pa.bool_()))
     tmp = pq_path.with_suffix(".tmp.parquet")
-    escritor = pq.ParquetWriter(tmp, esquema_out, compression="snappy")
+    escritor = pq.ParquetWriter(tmp, esquema_out, compression="zstd")
     filas = cubiertas = 0
     try:
         for rb in pf.iter_batches(batch_size=lote):

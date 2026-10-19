@@ -75,7 +75,7 @@ Patrimonio negativo: **real** (20 observaciones, 7 entidades; pérdidas acumulad
 
 ## 10. Limitaciones y riesgos residuales
 1. [L] ~53 % del panel (65 % en 2020+) con segmento arrastrado; S4/S5 y mutualistas fuera del panel.
-2. [L] `balance.parquet` pesa 88,9 MB; GitHub rechaza archivos >100 MB y ya emite advertencia (>50 MB). Crece ~1 MB/mes: **riesgo a ≈10 meses**; requiere Git LFS o particionado. Responsable: dueño del repositorio.
+2. [R] Peso de datos: `scripts/optimizar_parquet.py` (orden físico por cooperativa/código/fecha + zstd, verificado bit a bit) redujo `master_data/` de 123,7 a 60,6 MB (`balance.parquet` 88,9 → 33,2 MB, `pyg.parquet` 20,3 → 14,9 MB) sin cambiar un solo valor; el workflow lo ejecuta tras cada corte y `validar_cierre.py --estricto` bloquea si algún archivo supera 95 MB. Con ~1 MB/mes de crecimiento el margen pasa de ≈10 meses a varios años. Queda el historial de `.git` (≈354 MB), que no se reescribe.
 3. [L] Identidad por nombre (RUC solo para S1/mutualistas): cambios de razón social distintos del sufijo «EN LIQUIDACION» no se detectan.
 4. [L] 30 salidas del panel sin registro posterior no se interpretan como quiebras (posibles fusiones).
 5. [L] Capitalización = proxy (A−P)/A; la solvencia regulatoria solo existe para S1/mutualistas/FINANCOOP.

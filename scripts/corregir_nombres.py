@@ -34,7 +34,7 @@ def main(dry=False):
     print(eq[["nombre_fuente", "nombre_corregido", "filas_balance", "gemelo_existente_en_balance"]].to_string())
     if dry: return
     # balance por lotes (conserva esquema y orden)
-    tmp = MD / "balance.parquet.tmp"; w = pq.ParquetWriter(tmp, pf.schema_arrow, compression="snappy"); n_in = n_out = 0
+    tmp = MD / "balance.parquet.tmp"; w = pq.ParquetWriter(tmp, pf.schema_arrow, compression="zstd"); n_in = n_out = 0
     for rb in pf.iter_batches(batch_size=2_000_000):
         t = pa.Table.from_batches([rb]); col = pd.Series(t["cooperativa"].to_pandas().astype(str)).replace(mapa)
         t = t.set_column(t.schema.get_field_index("cooperativa"), pf.schema_arrow.field("cooperativa"), pa.array(col.values).cast(pf.schema_arrow.field("cooperativa").type))

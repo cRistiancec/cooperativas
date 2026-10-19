@@ -15,3 +15,6 @@
 
 ## Sesión 6 (producción)
 - Merge de `main` (conflicto de datos) y restauración de la historia de solvencia; unificación de identidades (mojibake, sufijo EN LIQUIDACION); workflow seguro con validación estricta y pruebas; pruebas E2E con navegador. Ver `docs/cierre/INFORME_CIERRE.md`.
+
+## Sesión 7 (peso de datos)
+- `scripts/optimizar_parquet.py`: reordenamiento físico + zstd, lossless y verificado; `master_data/` 123,7 → 60,6 MB. Escritores migrados de snappy a zstd; paso en el workflow; control de 95 MB en `validar_cierre.py`; `tests/test_optimizar_parquet.py` (167 pruebas OK).

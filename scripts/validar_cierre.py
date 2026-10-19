@@ -54,6 +54,7 @@ pyg = leer("pyg.parquet", ["cooperativa","fecha"]); ind = leer("indicadores.parq
 bal_u = set(ult_ for ult_ in [])  # placeholder para claridad
 res["consistencia_entidades_2026-09-30"] = {"pyg": int(pyg[pyg.fecha==ult].cooperativa.nunique()), "indicadores": int(ind[ind.fecha==ult].cooperativa.nunique()),
     "dim_segmento": int(dm.cooperativa.nunique()), "balance": res["balance.parquet"]["entidades_por_segmento_corte"]}
+res["pesos_mb"] = {f.name: round(f.stat().st_size/1e6, 2) for f in sorted(MD.glob("*.parquet"))}
 json.dump(res, open(OUT/"validacion_componentes.json", "w"), indent=1, ensure_ascii=False, default=str)
 if "--estricto" in sys.argv:       # errores BLOQUEANTES (exit 1); las advertencias informativas no bloquean
     esperado = json.load(open(MD/"metadata.json"))["fecha_max"][:10]; err = []
@@ -65,6 +66,8 @@ if "--estricto" in sys.argv:       # errores BLOQUEANTES (exit 1); las advertenc
     seg = res["balance.parquet"]["entidades_por_segmento_corte"] if False else res["balance.parquet"].get("entidades_por_segmento_corte", {})
     for s in ("SEGMENTO 1", "SEGMENTO 2", "SEGMENTO 3"):
         if not seg.get(s): err.append(f"balance: sin entidades de {s} en el corte {esperado}")
+    for f, mb in res["pesos_mb"].items():   # límite duro de GitHub: 100 MB por archivo
+        if mb > 95: err.append(f"{f}: {mb} MB supera 95 MB (límite de GitHub 100 MB); usar Git LFS o particionar")
     if err: print("ERRORES BLOQUEANTES:\n  " + "\n  ".join(err)); sys.exit(1)
     print("Validación estricta OK (corte %s)" % esperado)
 print(json.dumps(res, indent=1, ensure_ascii=False, default=str))
