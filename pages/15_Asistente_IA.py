@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+import pandas as pd
 import streamlit as st
 
 from analytics.financial_engine import calcular_score_camel, evaluar_alertas
@@ -21,8 +22,10 @@ from services.asistente_ia import (
     responder_con_claude,
     responder_local,
 )
-from ui import aplicar_tema, render_sidebar
-from utils.data_loader import cargar_indicadores, cargar_metadata
+from ui import (
+    aplicar_tema, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar, selector_fecha_corte,
+)
+from utils.data_loader import acotar_entidades, cargar_metadata, datos_filtrados, datos_universo
 
 st.set_page_config(
     page_title="Asistente Inteligente | Radar Cooperativo Ecuador",
@@ -32,12 +35,15 @@ st.set_page_config(
 aplicar_tema()
 
 
-@st.cache_data(ttl=1800)
-def _resumen_alertas_y_score():
-    df_ind, _ = cargar_indicadores()
-    fecha_max = df_ind["fecha"].max()
-    alertas = evaluar_alertas(df_ind, fecha_max)
-    score = calcular_score_camel(df_ind, fecha_max)
+def _resumen_alertas_y_score(filtro, fecha):
+    """Alertas (umbrales por entidad) y score CAMEL (relativo al universo) de la selección global en la fecha de análisis."""
+    df_ind = datos_filtrados("indicadores", filtro)
+    alertas = evaluar_alertas(df_ind, fecha)
+    score = calcular_score_camel(datos_universo("indicadores", filtro), fecha)
+    if not score.empty and filtro.entidades:
+        meta = datos_universo("indicadores", filtro)
+        meta = meta[meta["fecha"] == fecha][["cooperativa", "entidad"]].drop_duplicates("cooperativa")
+        score = acotar_entidades(score.merge(meta, on="cooperativa", how="left"), filtro)
 
     resumen_alertas = alertas["semaforo"].value_counts().to_dict() if not alertas.empty else {}
     resumen_score = {"promedio": round(float(score["score_total"].mean()), 1)} if not score.empty else {}
@@ -51,7 +57,17 @@ def main():
     st.title("🧠 Asistente Inteligente")
     st.markdown("Chat institucional anclado a los datos reales de la plataforma.")
 
-    alertas_df, score_df, resumen_alertas, resumen_score = _resumen_alertas_y_score()
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ind = datos_filtrados("indicadores", filtro)
+    render_resumen_filtro(filtro, df_ind[df_ind["fecha"] == fecha_sel] if not df_ind.empty else df_ind,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ind)
+    alertas_df, score_df, resumen_alertas, resumen_score = _resumen_alertas_y_score(filtro, fecha_sel)
+    # El asistente responde sobre la MISMA población que el resto de la aplicación
+    metadata = {**metadata, "cooperativas": int(df_ind.loc[df_ind["fecha"] == fecha_sel, "entidad"].nunique()),
+                "fecha_min": str(pd.Timestamp(filtro.fecha_ini).date()), "fecha_max": str(pd.Timestamp(fecha_sel).date()),
+                "seleccion_activa": filtro.descripcion(), "meses": int(df_ind["fecha"].nunique())}
 
     with st.sidebar:
         st.markdown("---")

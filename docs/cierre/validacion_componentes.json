@@ -102,6 +102,24 @@
    "nombre"
   ]
  },
+ "dim_observaciones.parquet": {
+  "filas": 19419,
+  "duplicados_clave": 0,
+  "clave": [
+   "cooperativa",
+   "fecha"
+  ],
+  "fecha_max": "2026-09-30",
+  "fecha_min": "2018-01-31",
+  "entidades": 253,
+  "entidades_ultimo_corte": 205,
+  "procedencia_clasif": {
+   "arrastrado": 10075,
+   "oficial_mes": 9043,
+   "estimado": 301
+  },
+  "procedencia_invalida": 0
+ },
  "balance.parquet": {
   "filas": 24873126,
   "fecha_max": "2026-09-30",
@@ -196,6 +214,7 @@
   "agg_ranking_cooperativas.parquet": 1.13,
   "agg_series_temporales.parquet": 1.05,
   "balance.parquet": 33.24,
+  "dim_observaciones.parquet": 0.02,
   "dim_segmento_historico.parquet": 0.03,
   "entidades_cooperativas.parquet": 0.01,
   "entidades_trimestral.parquet": 0.06,

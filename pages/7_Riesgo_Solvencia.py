@@ -20,14 +20,15 @@ from analytics.financial_engine import (
     calcular_patrimonio_sobre_activos,
     evaluar_solvencia_oficial,
 )
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES, crear_radar, crear_ranking_barras
 from utils.data_loader import (
-    cargar_indicadores,
     cargar_metadata,
-    cargar_ranking_cooperativas,
-    cargar_solvencia,
-    obtener_cooperativas_por_segmento,
+    datos_filtrados,
+    obtener_cooperativas_filtro,
 )
 
 st.set_page_config(
@@ -42,13 +43,22 @@ _DIRECCION_RADAR = {"FK": True, "FI": True, "CAP_NETO": True, "VULN_PAT": False,
 
 
 @st.cache_data(ttl=3600)
-def _serie_indicador(df_indicadores: pd.DataFrame, codigo: str, segmento: str = "Todos") -> pd.DataFrame:
+def _serie_indicador(df_indicadores: pd.DataFrame, codigo: str) -> pd.DataFrame:
+    """Promedio simple mensual del indicador sobre la población filtrada (df ya filtrado) y n.º de entidades."""
     df_f = df_indicadores[df_indicadores["codigo"] == codigo]
-    if segmento != "Todos":
-        df_f = df_f[df_f["segmento"] == segmento]
-    serie = df_f.groupby("fecha", observed=True)["valor"].mean().reset_index()
+    serie = df_f.groupby("fecha", observed=True).agg(valor=("valor", "mean"), entidades=("entidad", "nunique")).reset_index()
     serie["valor_pct"] = serie["valor"] * 100
     return serie.sort_values("fecha")
+
+
+def _calidad_solvencia(df: pd.DataFrame) -> dict:
+    """Resumen de cobertura del boletín FS01 sobre la población filtrada."""
+    if df is None or df.empty:
+        return {'disponible': False, 'motivo': 'Sin entidades del boletín FS01 en la selección actual (o archivo no generado).'}
+    return {
+        'disponible': True, 'ruc_unicos': int(df['ruc'].nunique()), 'fecha_min': df['fecha'].min(), 'fecha_max': df['fecha'].max(),
+        'discrepancias': int(df['discrepancia_solvencia'].fillna(False).astype(bool).sum()) if 'discrepancia_solvencia' in df.columns else 0,
+    }
 
 
 def main():
@@ -65,24 +75,17 @@ def main():
         "Solvencia (FS01) — fuente que este pipeline no procesa. Detalle en `docs/RIESGO_METODOLOGIA.md`."
     )
 
-    df_ind, calidad = cargar_indicadores()
-    df_ranking = cargar_ranking_cooperativas()
-
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
-
-    fechas = sorted(df_ind["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_solv",
-    )
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ind = datos_filtrados("indicadores", filtro)
+    df_ranking = datos_filtrados("ranking", filtro)
+    render_resumen_filtro(filtro, df_ind[df_ind["fecha"] == fecha_sel] if not df_ind.empty else df_ind,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ind)
 
     df_cap_neto = df_ind[(df_ind["codigo"] == "CAP_NETO") & (df_ind["fecha"] == fecha_sel)]
-    if segmento_sel != "Todos":
-        df_cap_neto = df_cap_neto[df_cap_neto["segmento"] == segmento_sel]
 
-    patrim_activos = calcular_patrimonio_sobre_activos(df_ranking, fecha_sel, segmento_sel)
+    patrim_activos = calcular_patrimonio_sobre_activos(df_ranking, fecha_sel)
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -109,17 +112,23 @@ def main():
             df_r = patrim_activos.nlargest(20, "patrimonio_sobre_activos")
             fig = crear_ranking_barras(df_r, x_col="patrimonio_sobre_activos", y_col="cooperativa", formato_valor="{:.1f}%")
             st.plotly_chart(fig, width="stretch")
+            with st.expander("Datos del ranking (descarga)"):
+                _t = df_r.merge(df_ranking[["cooperativa", "entidad", "procedencia_clasif"]].drop_duplicates("cooperativa"),
+                                on="cooperativa", how="left")
+                _t.insert(0, "fecha", pd.Timestamp(fecha_sel))
+                st.dataframe(_t, width="stretch", hide_index=True)
+                botones_descarga(_t, filtro, f"solvencia_ranking_patrimonio_activos_{pd.Timestamp(fecha_sel):%Y%m}",
+                                 "Ranking Patrimonio / Activos", "dl_solv_rank", corte=fecha_sel)
         else:
             st.info("Sin datos para esta selección.")
 
     with tab2:
-        cooperativas = obtener_cooperativas_por_segmento(segmento_sel)
+        _con_ind = set(df_ind.loc[df_ind["fecha"] == fecha_sel, "cooperativa"].astype(str))
+        cooperativas = [c for c in obtener_cooperativas_filtro(filtro) if c in _con_ind]
         if cooperativas:
             coop_sel = st.selectbox("Cooperativa", cooperativas, key="coop_radar_solv")
 
             df_fecha_ind = df_ind[df_ind["fecha"] == fecha_sel]
-            if segmento_sel != "Todos":
-                df_fecha_ind = df_fecha_ind[df_fecha_ind["segmento"] == segmento_sel]
 
             valores_coop, valores_sistema = [], []
             for codigo in _INDICADORES_RADAR:
@@ -146,18 +155,18 @@ def main():
             )
             st.plotly_chart(fig, width="stretch")
             st.caption(
-                "Percentiles calculados dentro del segmento/fecha seleccionados. "
+                "Percentiles calculados dentro de la población filtrada (período, segmentos, entidades y calidad) en la fecha de análisis. "
                 "VULN_PAT y CART_IMPR_PAT se invierten (menor valor = mejor, mayor percentil)."
             )
         else:
-            st.info("Sin cooperativas disponibles para este segmento.")
+            st.info("Sin cooperativas con indicadores para la selección.")
 
     with tab3:
         codigo_evol = st.selectbox(
             "Indicador", _INDICADORES_RADAR,
             format_func=lambda c: ETIQUETAS_SOLVENCIA.get(c, c), key="codigo_evol_solv",
         )
-        serie = _serie_indicador(df_ind, codigo_evol, segmento_sel)
+        serie = _serie_indicador(df_ind, codigo_evol)
         if not serie.empty:
             fig = px.line(serie, x="fecha", y="valor_pct", markers=True,
                           labels={"fecha": "Fecha", "valor_pct": f"{codigo_evol} (%)"})
@@ -167,11 +176,17 @@ def main():
             fig.update_xaxes(gridcolor=COLORES["grid"])
             fig.update_yaxes(gridcolor=COLORES["grid"])
             st.plotly_chart(fig, width="stretch")
+            st.caption("Promedio simple de las entidades de la selección en cada mes (la composición puede variar entre meses).")
+            with st.expander("Datos de la serie (descarga)"):
+                st.dataframe(serie, width="stretch", hide_index=True)
+                botones_descarga(serie, filtro, f"solvencia_serie_{codigo_evol}",
+                                 f"Serie {codigo_evol} (promedio)", "dl_solv_serie", corte=fecha_sel)
         else:
             st.info("Sin datos suficientes.")
 
     with tab4:
-        df_solv, calidad_solv = cargar_solvencia()
+        df_solv = datos_filtrados("solvencia", filtro)
+        calidad_solv = _calidad_solvencia(df_solv)
         if not calidad_solv.get('disponible'):
             st.warning(
                 "**No disponible en este despliegue.** El ratio de Solvencia oficial "
@@ -194,13 +209,10 @@ def main():
                 f"{calidad_solv['ruc_unicos']} RUC únicos, "
                 f"{calidad_solv['fecha_min']:%b %Y} a {calidad_solv['fecha_max']:%b %Y}."
             )
-            if segmento_sel != "Todos":
+            if filtro.segmentos:
                 st.info(
-                    f"El filtro global **Segmento: {segmento_sel}** no se aplica en esta "
-                    f"pestaña: `solvencia.parquet` no comparte la codificación de segmento "
-                    f"del resto de la plataforma (agrupa por Segmento 1 / Mutualista / "
-                    f"FINANCOOP, sin Segmento 2/3 — ver cobertura arriba). Esta tabla "
-                    f"siempre muestra el universo completo del boletín FS01."
+                    "El boletín FS01 solo cubre Segmento 1, Mutualistas y FINANCOOP: con segmentos 2/3 seleccionados no habrá "
+                    "entidades en esta pestaña. Se aplica el mismo filtro global (segmento puntual del período) que al resto."
                 )
             if calidad_solv.get('discrepancias'):
                 st.caption(
@@ -247,6 +259,10 @@ def main():
                     df_tabla[['Entidad', 'Grupo', 'Solvencia (%)', 'Cumple 9%', 'Brecha (pp)']],
                     width="stretch", hide_index=True,
                 )
+                _exp = df_eval.merge(df_solv[['cooperativa', 'fecha', 'entidad', 'segmento', 'procedencia_clasif']],
+                                     on=['cooperativa', 'fecha'], how='left') if 'fecha' in df_eval.columns else df_eval
+                botones_descarga(_exp, filtro, f"solvencia_fs01_{pd.Timestamp(fecha_solv_sel):%Y%m}", "Solvencia oficial FS01",
+                                 "dl_solv_fs01", corte=fecha_solv_sel)
 
     st.markdown("---")
     with st.expander("ℹ️ Definiciones"):

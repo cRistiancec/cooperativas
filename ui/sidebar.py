@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 import streamlit as st
 
+from ui.filtros import filtro_actual
 from utils.data_loader import cargar_catalogo_cooperativas, obtener_serie_sistema
 
 _PAGINAS_DISPONIBLES = [
@@ -69,7 +70,7 @@ def _buscador_cooperativas() -> None:
             f"""
             <div style="font-size:0.78rem; padding:6px 0; border-bottom:1px solid var(--sps-border);">
                 <strong>#{int(fila['ranking'])}</strong> — {fila['cooperativa']}<br>
-                <span style="color:var(--sps-text-dim);">{fila['segmento']} · Activos ${activos_m:,.1f}M</span>
+                <span style="color:var(--sps-text-dim);">Segmento actual: {fila["segmento"]} · Activos ${activos_m:,.1f}M</span>
             </div>
             """,
             unsafe_allow_html=True,
@@ -98,11 +99,12 @@ def _favoritos() -> None:
 
 def _indicadores_rapidos() -> None:
     """Mini KPIs del sistema (última fecha disponible), sin cargar el balance completo."""
-    serie_activos = obtener_serie_sistema("1")
-    serie_cartera = obtener_serie_sistema("14")
+    filtro = filtro_actual()          # los mini-KPI reflejan la selección vigente (período, segmentos, entidades)
+    serie_activos = obtener_serie_sistema("1", filtro)
+    serie_cartera = obtener_serie_sistema("14", filtro)
 
     if serie_activos.empty:
-        st.caption("Sin datos agregados disponibles.")
+        st.caption("Sin datos para la selección vigente.")
         return
 
     activos_m = serie_activos["valor_total"].iloc[-1] / 1_000_000
@@ -111,8 +113,8 @@ def _indicadores_rapidos() -> None:
     st.markdown(
         f"""
         <div style="font-size:0.78rem; line-height:1.9;">
-            <div>Activos del sistema: <strong>${activos_m:,.0f}M</strong></div>
-            <div>Cartera de créditos: <strong>${cartera_m:,.0f}M</strong></div>
+            <div>Activos de la selección: <strong>${activos_m:,.0f}M</strong></div>
+            <div>Cartera de la selección: <strong>${cartera_m:,.0f}M</strong></div>
         </div>
         """,
         unsafe_allow_html=True,

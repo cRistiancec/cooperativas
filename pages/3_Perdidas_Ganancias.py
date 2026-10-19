@@ -14,9 +14,9 @@ import calendar
 sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.data_loader import (
-    cargar_pyg,
-    obtener_fechas_disponibles,
-    obtener_cooperativas_por_segmento,
+    datos_filtrados,
+    obtener_cooperativas_filtro,
+    obtener_ranking_rapido,
     cargar_metadata,
 )
 from utils.charts import (
@@ -27,7 +27,11 @@ from utils.charts import (
     truncar_nombres_unicos,
 )
 from config.constants import MESES
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales,
+    render_resumen_filtro, render_sidebar, selector_fecha_corte,
+)
+from ui.filtros import multiselect_validado
 
 # =============================================================================
 # CONFIGURACION
@@ -57,13 +61,12 @@ CUENTAS_PYG = {
 # FUNCIONES DE DATOS
 # =============================================================================
 
-@st.cache_data
 def construir_jerarquia_pyg(df: pd.DataFrame) -> dict:
-    """Construye jerarquía de cuentas PyG desde los datos."""
+    """Construye jerarquía de cuentas PyG desde los datos (sin st.cache_data: hashear millones de filas costaba minutos)."""
     jerarquia = {}
 
     # Obtener cuentas únicas
-    cuentas = df[['codigo', 'cuenta']].drop_duplicates()
+    cuentas = df[['codigo', 'cuenta']].drop_duplicates().astype(str)
 
     # Nivel 1: códigos de 1 dígito (4, 5)
     for _, row in cuentas[cuentas['codigo'].str.len() == 1].iterrows():
@@ -97,48 +100,37 @@ def main():
     st.markdown("Análisis de resultados del sistema cooperativo ecuatoriano.")
     st.caption("Valores anualizados (suma móvil 12 meses)")
 
-    # Cargar datos
+    # Filtros globales (período ∩ segmentos ∩ entidades ∩ calidad), únicos para toda la plataforma
+    filtro = render_filtros_globales()
+    fecha_corte = selector_fecha_corte(filtro)
     try:
-        df_pyg, calidad = cargar_pyg()
-    except FileNotFoundError as e:
+        df_pyg = datos_filtrados("pyg", filtro)
+        metadata = cargar_metadata()
+    except Exception as e:
         st.error(f"Error al cargar datos de PYG: {e}")
         st.info("Ejecuta: `python scripts/procesar_pyg.py`")
         return
-    except Exception as e:
-        st.error(f"Error al cargar datos de PYG: {e}")
-        return
 
-    # Verificar que existe valor_12m
-    if 'valor_12m' not in df_pyg.columns:
-        st.error("Los datos no tienen la columna 'valor_12m'. Ejecuta: `python scripts/procesar_pyg.py`")
-        return
+    if not df_pyg.empty:
+        if 'valor_12m' not in df_pyg.columns:
+            st.error("Los datos no tienen la columna 'valor_12m'. Ejecuta: `python scripts/procesar_pyg.py`")
+            return
+        df_pyg = df_pyg[df_pyg['valor_12m'].notna()]
 
-    # Filtrar solo registros con valor_12m válido
-    df_pyg = df_pyg[df_pyg['valor_12m'].notna()]
+    render_resumen_filtro(filtro, df_pyg[df_pyg['fecha'] == fecha_corte] if not df_pyg.empty else df_pyg,
+                          corte=pd.Timestamp(metadata['fecha_max']), fecha_analisis=fecha_corte)
+    exigir_datos(df_pyg)
 
-    # Fechas disponibles
-    fechas = obtener_fechas_disponibles(df_pyg)
-    fecha_min = min(fechas)
-    fecha_max = max(fechas)
+    fecha_min, fecha_max = pd.Timestamp(filtro.fecha_ini), pd.Timestamp(filtro.fecha_fin)
+    cooperativas = obtener_cooperativas_filtro(filtro)
+    _con_datos = set(df_pyg['cooperativa'].astype(str).unique())
+    cooperativas = [c for c in cooperativas if c in _con_datos]
 
-    # Sidebar - Filtros globales
-    st.sidebar.markdown("### Filtros")
-
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_global = render_filtro_segmento()
-
-    # Filtrar por segmento si aplica
-    if segmento_global != "Todos":
-        df_pyg = df_pyg[df_pyg['segmento'] == segmento_global]
-
-    # cargar_pyg() ya excluye las filas de subtotal VT_TOTAL* (ver su docstring
-    # en utils/data_loader.py) — no hace falta volver a filtrarlas aquí.
-    cooperativas = sorted(df_pyg['cooperativa'].unique().tolist())
-
-    # Cooperativas por defecto (top 4 por activos)
-    cooperativas_ordenadas = obtener_cooperativas_por_segmento(segmento_global)
-    cooperativas_default = cooperativas_ordenadas[:4] if len(cooperativas_ordenadas) >= 4 else cooperativas[:4]
-    cooperativas_default = [c for c in cooperativas_default if c in cooperativas]
+    # Cooperativas por defecto: top 4 por activos en la fecha de análisis, dentro de la selección
+    rk = obtener_ranking_rapido(fecha_corte, '1', top_n=4, filtro=filtro)
+    cooperativas_default = [c for c in (rk['cooperativa'].tolist() if not rk.empty else []) if c in cooperativas]
+    if not cooperativas_default:
+        cooperativas_default = cooperativas[:4]
 
     # Construir jerarquía de cuentas
     jerarquia = construir_jerarquia_pyg(df_pyg)
@@ -194,7 +186,7 @@ def main():
     # FILA 2: Selector de Cooperativas
     # -------------------------------------------------------------------------
     st.markdown("**Cooperativas a Comparar:**")
-    cooperativas_seleccionadas = st.multiselect(
+    cooperativas_seleccionadas = multiselect_validado(
         "Selecciona hasta 10 cooperativas",
         options=cooperativas,
         default=cooperativas_default,
@@ -210,33 +202,7 @@ def main():
 
     with col_tiempo:
         st.markdown("**Período**")
-        mes_inicio = st.selectbox(
-            "Mes desde",
-            options=list(range(1, 13)),
-            format_func=lambda x: MESES[x],
-            index=0,
-            key="mes_inicio_pyg"
-        )
-        ano_inicio = st.selectbox(
-            "Año desde",
-            options=range(fecha_min.year, fecha_max.year + 1),
-            index=0,
-            key="ano_inicio_pyg"
-        )
-
-        mes_fin = st.selectbox(
-            "Mes hasta",
-            options=list(range(1, 13)),
-            format_func=lambda x: MESES[x],
-            index=fecha_max.month - 1,
-            key="mes_fin_pyg"
-        )
-        ano_fin = st.selectbox(
-            "Año hasta",
-            options=range(fecha_min.year, fecha_max.year + 1),
-            index=fecha_max.year - fecha_min.year,
-            key="ano_fin_pyg"
-        )
+        st.caption(f"{fecha_min:%m/%Y} – {fecha_max:%m/%Y} (filtro global)")
 
         # Modo de visualización
         modo = st.radio(
@@ -254,9 +220,7 @@ def main():
         )
 
     with col_chart:
-        fecha_inicio_sel = pd.Timestamp(year=ano_inicio, month=mes_inicio, day=1)
-        last_day_fin = calendar.monthrange(ano_fin, mes_fin)[1]
-        fecha_fin_sel = pd.Timestamp(year=ano_fin, month=mes_fin, day=last_day_fin)
+        fecha_inicio_sel, fecha_fin_sel = fecha_min, fecha_max   # df_pyg ya está acotado por el filtro global
 
         if cooperativas_seleccionadas:
             fig_evol = go.Figure()
@@ -338,6 +302,11 @@ def main():
             )
 
             st.plotly_chart(fig_evol, width='stretch')
+            _ev = df_pyg[(df_pyg['codigo'] == codigo_cuenta) & df_pyg['cooperativa'].astype(str).isin(cooperativas_seleccionadas)][
+                ['fecha', 'cooperativa', 'entidad', 'segmento', 'procedencia_clasif', 'codigo', 'cuenta', 'valor_12m']]
+            with st.expander("Datos de la evolución (descarga)"):
+                st.dataframe(_ev, width="stretch", hide_index=True)
+                botones_descarga(_ev, filtro, f"pyg_evolucion_{codigo_cuenta}", "Evolución P&G", "dl_pyg_evol", corte=fecha_corte)
         else:
             st.info("Selecciona al menos una cooperativa para visualizar.")
 
@@ -379,21 +348,8 @@ def main():
         codigo_rank = opciones_nivel2_r[nivel2_label_r]
 
     with col_f2:
-        mes_rank = st.selectbox(
-            "Mes",
-            options=list(MESES.keys()),
-            format_func=lambda x: MESES[x],
-            index=fecha_max.month - 1,
-            key="mes_rank_pyg"
-        )
-
-    with col_f3:
-        ano_rank = st.selectbox(
-            "Año",
-            options=range(fecha_min.year, fecha_max.year + 1),
-            index=fecha_max.year - fecha_min.year,
-            key="ano_rank_pyg"
-        )
+        st.markdown("**Fecha del ranking**")
+        st.caption(f"{fecha_corte:%m/%Y} (fecha de análisis global)")
 
     # Top N selector
     top_n_rank = st.selectbox(
@@ -404,9 +360,7 @@ def main():
         key="top_n_rank_pyg"
     )
 
-    # Construir fecha seleccionada
-    last_day_rank = calendar.monthrange(ano_rank, mes_rank)[1]
-    fecha_rank = pd.Timestamp(year=ano_rank, month=mes_rank, day=last_day_rank)
+    fecha_rank = pd.Timestamp(fecha_corte)
 
     # Obtener nombre de la cuenta para el ranking
     if codigo_rank == codigo_nivel1_r:
@@ -446,7 +400,7 @@ def main():
         ))
 
         fig_rank.update_layout(
-            title=f"{nombre_cuenta_rank} - {MESES[mes_rank]} {ano_rank}",
+            title=f"{nombre_cuenta_rank} - {MESES[fecha_rank.month]} {fecha_rank.year}",
             height=altura_por_categorias(len(df_rank), px_por_categoria=25),
             xaxis_title="Millones USD (12M)",
             yaxis_title="",
@@ -456,6 +410,10 @@ def main():
         )
 
         st.plotly_chart(fig_rank, width='stretch')
+        _rk = df_rank[['fecha', 'cooperativa', 'entidad', 'segmento', 'procedencia_clasif', 'codigo', 'cuenta', 'valor_12m']]
+        with st.expander("Datos del ranking (descarga)"):
+            st.dataframe(_rk, width="stretch", hide_index=True)
+            botones_descarga(_rk, filtro, f"pyg_ranking_{codigo_rank}_{fecha_rank:%Y%m}", "Ranking P&G", "dl_pyg_rank", corte=fecha_corte)
 
         # Estadísticas del sistema
         col_s1, col_s2, col_s3 = st.columns(3)

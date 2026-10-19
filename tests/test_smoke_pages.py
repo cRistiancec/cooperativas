@@ -146,14 +146,10 @@ import warnings; warnings.filterwarnings('ignore')
 from streamlit.testing.v1 import AppTest
 at = AppTest.from_file("pages/10_CAMEL_Score.py", default_timeout=%d)
 at.run()
-sb = next((s for s in at.sidebar.selectbox if s.label == "Segmento"), None)
-if sb is None:
-    print("EXCEPTION: selectbox del Filtro Global de Segmento no encontrado")
-else:
-    opciones = sb.options
-    if len(opciones) > 1:
-        sb.set_value(opciones[1]).run()
-    print("EXCEPTION:", at.exception[0].value) if at.exception else print("OK")
+sb = at.sidebar.multiselect(key="_w_segmentos")
+if len(sb.options) > 1:
+    sb.set_value([sb.options[1]]).run()
+print("EXCEPTION:", at.exception[0].value) if at.exception else print("OK")
 """ % UMBRAL_SEGUNDOS
         resultado = _ejecutar_apptest(codigo)
         self.assertIn("OK", resultado.stdout, msg=f"stdout={resultado.stdout!r} stderr={resultado.stderr[-500:]!r}")

@@ -45,6 +45,7 @@ CLAVES = {
     "indicadores": ["cooperativa", "fecha"],
     "panel_vulnerabilidad": ["cooperativa", "fecha"],
     "solvencia": ["ruc", "fecha"],
+    "dim_observaciones": ["cooperativa", "fecha"],
 }
 UMBRAL_PEQUENO = 10 * 1024 * 1024  # bytes: por debajo se usa zstd 19
 FILAS_POR_GRUPO = 1_000_000

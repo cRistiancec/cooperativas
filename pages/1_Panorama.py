@@ -14,7 +14,9 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.data_loader import (
+    datos_filtrados,
     obtener_fechas_disponibles_rapido,
+    obtener_ultima_fecha,
     obtener_metricas_kpi,
     obtener_ranking_rapido,
     obtener_datos_treemap_rapido,
@@ -34,7 +36,10 @@ from utils.charts import (
     COLORES,
 )
 from config.indicator_mapping import CODIGOS_BALANCE
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.data_loader import cargar_metadata
 
 # =============================================================================
@@ -120,24 +125,17 @@ def main():
         st.info("Ejecuta: `python scripts/generar_agregados.py`")
         return
 
-    # Sidebar - Filtros
-    st.sidebar.markdown("### Filtros")
+    # Filtros globales (período ∩ segmentos ∩ entidades ∩ calidad) — los mismos en toda la plataforma
+    filtro = render_filtros_globales()
+    fecha_seleccionada = selector_fecha_corte(filtro)
+    poblacion = datos_filtrados("ranking", filtro)
+    poblacion_corte = poblacion[poblacion["fecha"] == fecha_seleccionada] if not poblacion.empty else poblacion
+    render_resumen_filtro(filtro, poblacion_corte, corte=obtener_ultima_fecha(), fecha_analisis=fecha_seleccionada)
+    exigir_datos(poblacion_corte)
 
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_seleccionado = render_filtro_segmento()
-
-    # Selector de fecha
-    fecha_seleccionada = st.sidebar.selectbox(
-        "Fecha de análisis",
-        options=fechas,
-        format_func=lambda x: pd.Timestamp(x).strftime('%B %Y').title(),
-        index=0,
-        key="fecha_panorama"
-    )
-
-    # Obtener fecha anterior (12 meses atrás)
-    idx_fecha = list(fechas).index(fecha_seleccionada)
-    fecha_anterior = fechas[idx_fecha + 12] if idx_fecha + 12 < len(fechas) else None
+    # Mismo mes del año anterior (por fecha, no por posición en la lista)
+    _prev = pd.Timestamp(fecha_seleccionada) - pd.DateOffset(months=12)
+    fecha_anterior = _prev if _prev in set(map(pd.Timestamp, fechas)) else None
 
     # ==========================================================================
     # SECCION 1: KPIs PRINCIPALES (OPTIMIZADO)
@@ -146,12 +144,12 @@ def main():
     st.markdown("### Indicadores del Sistema")
 
     # Obtener métricas actuales (usando datos pre-agregados)
-    metricas = obtener_metricas_kpi(fecha_seleccionada, segmento_seleccionado)
+    metricas = obtener_metricas_kpi(fecha_seleccionada, filtro)
 
     # Calcular deltas si hay fecha anterior
     deltas = {}
     if fecha_anterior:
-        metricas_ant = obtener_metricas_kpi(fecha_anterior, segmento_seleccionado)
+        metricas_ant = obtener_metricas_kpi(fecha_anterior, filtro)
         for key in ['total_activos', 'total_cartera', 'total_depositos', 'total_patrimonio']:
             if metricas_ant.get(key, 0) > 0:
                 deltas[key] = ((metricas.get(key, 0) - metricas_ant[key]) / metricas_ant[key]) * 100
@@ -209,7 +207,7 @@ def main():
         st.markdown("### Mapa de Activos por Cooperativa")
         st.caption("Top 20 cooperativas - Haz clic para ver composición de activos")
 
-        df_tree = obtener_datos_treemap_rapido(fecha_seleccionada, segmento_seleccionado, top_n=20)
+        df_tree = obtener_datos_treemap_rapido(fecha_seleccionada, filtro, top_n=20)
 
         if not df_tree.empty and df_tree['values'].sum() > 0:
             fig_tree = _crear_treemap_cached(df_tree, altura=500)
@@ -231,7 +229,7 @@ def main():
             fecha_seleccionada,
             codigo=CODIGOS_BALANCE['activo_total'],
             top_n=top_n_ranking,
-            segmento=segmento_seleccionado
+            filtro=filtro
         )
 
         if not ranking.empty:
@@ -240,6 +238,10 @@ def main():
                 formato_valor="${:,.0f}M", altura=altura_por_categorias(len(ranking))
             )
             st.plotly_chart(fig_rank, width='stretch')
+            with st.expander("Datos del ranking de activos (descarga)"):
+                _t = ranking.rename(columns={"valor_millones": "activos_millones_usd"})
+                st.dataframe(_t, width="stretch", hide_index=True)
+                botones_descarga(_t, filtro, f"ranking_activos_{pd.Timestamp(fecha_seleccionada):%Y%m}", "Ranking de activos", "dl_pan_act", corte=fecha_seleccionada)
 
     st.markdown("---")
 
@@ -253,7 +255,7 @@ def main():
         st.markdown("### Mapa de Pasivos y Patrimonio por Cooperativa")
         st.caption("Top 20 cooperativas - Haz clic para ver composición de pasivos")
 
-        df_tree_pasivos = obtener_datos_treemap_pasivos_rapido(fecha_seleccionada, segmento_seleccionado, top_n=20)
+        df_tree_pasivos = obtener_datos_treemap_pasivos_rapido(fecha_seleccionada, filtro, top_n=20)
 
         if not df_tree_pasivos.empty and df_tree_pasivos['values'].sum() > 0:
             fig_tree_pas = _crear_treemap_cached(df_tree_pasivos, altura=500)
@@ -269,7 +271,7 @@ def main():
             fecha_seleccionada,
             codigo=CODIGOS_BALANCE['pasivo_total'],
             top_n=top_n_ranking,
-            segmento=segmento_seleccionado
+            filtro=filtro
         )
 
         if not ranking_pasivos.empty:
@@ -278,6 +280,10 @@ def main():
                 formato_valor="${:,.0f}M", altura=altura_por_categorias(len(ranking_pasivos))
             )
             st.plotly_chart(fig_rank_pas, width='stretch')
+            with st.expander("Datos del ranking de pasivos (descarga)"):
+                _tp = ranking_pasivos.rename(columns={"valor_millones": "pasivos_millones_usd"})
+                st.dataframe(_tp, width="stretch", hide_index=True)
+                botones_descarga(_tp, filtro, f"ranking_pasivos_{pd.Timestamp(fecha_seleccionada):%Y%m}", "Ranking de pasivos", "dl_pan_pas", corte=fecha_seleccionada)
 
     st.markdown("---")
 
@@ -298,13 +304,14 @@ def main():
             df_crec_cartera = obtener_crecimiento_anual(
                 fecha_seleccionada, fecha_anterior,
                 codigo=CODIGOS_BALANCE['cartera_creditos'],
-                segmento=segmento_seleccionado,
+                filtro=filtro,
                 top_n=20
             )
 
             if not df_crec_cartera.empty:
                 fig_cartera = _crear_crecimiento_cached(df_crec_cartera, "Crecimiento Anual (%)")
                 st.plotly_chart(fig_cartera, width='stretch')
+                botones_descarga(df_crec_cartera, filtro, f"crecimiento_cartera_{pd.Timestamp(fecha_seleccionada):%Y%m}", "Crecimiento anual de cartera", "dl_pan_cc", corte=fecha_seleccionada)
             else:
                 st.info("Sin datos de crecimiento disponibles.")
         else:
@@ -317,13 +324,14 @@ def main():
             df_crec_depositos = obtener_crecimiento_anual(
                 fecha_seleccionada, fecha_anterior,
                 codigo=CODIGOS_BALANCE['obligaciones_publico'],
-                segmento=segmento_seleccionado,
+                filtro=filtro,
                 top_n=20
             )
 
             if not df_crec_depositos.empty:
                 fig_depositos = _crear_crecimiento_cached(df_crec_depositos, "Crecimiento Anual (%)")
                 st.plotly_chart(fig_depositos, width='stretch')
+                botones_descarga(df_crec_depositos, filtro, f"crecimiento_depositos_{pd.Timestamp(fecha_seleccionada):%Y%m}", "Crecimiento anual de depósitos", "dl_pan_cd", corte=fecha_seleccionada)
             else:
                 st.info("Sin datos de crecimiento disponibles.")
         else:
@@ -338,6 +346,7 @@ def main():
     with st.expander("🔍 Calidad de datos e identidad de entidades (para esta fecha)"):
         df_ind, _ = cargar_indicadores()
         df_ranking = cargar_ranking_cooperativas()
+        st.caption("Esta verificación se hace sobre TODA la base (independiente de los filtros): evalúa la integridad del dato, no la selección.")
         if df_ind.empty or df_ranking.empty:
             st.info("Sin datos suficientes para el reporte de calidad.")
         else:
@@ -358,6 +367,10 @@ def main():
 
         st.markdown("##### Identidad de entidades")
         df_entidades = cargar_entidades()
+        if not df_entidades.empty and not poblacion.empty:
+            # solo las entidades de la selección (comparación por identidad estable, sin sufijo «EN LIQUIDACION»)
+            from analytics.vulnerabilidad.identidad import entidad_id
+            df_entidades = df_entidades[df_entidades["nombre"].map(entidad_id).isin(set(poblacion["entidad"]))]
         if df_entidades.empty:
             st.info(
                 "Tabla de identidad no generada. Ejecutar `python scripts/generar_entidades.py`."

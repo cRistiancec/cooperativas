@@ -21,10 +21,13 @@ from analytics.financial_engine import (
     ventana_fechas,
 )
 from config.umbrales_alerta import REGLAS_ALERTA
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES, altura_por_categorias, crear_radar, truncar_nombres_unicos
 from utils.data_loader import (
-    cargar_indicadores, cargar_metadata, cargar_ranking_cooperativas,
+    cargar_metadata, datos_filtrados, datos_universo,
     obtener_crecimiento_anual, obtener_fechas_disponibles_rapido,
 )
 
@@ -50,17 +53,12 @@ def main():
         "en las instituciones con mayor número de señales de deterioro."
     )
 
-    df_ind, calidad = cargar_indicadores()
-
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
-
-    fechas = sorted(df_ind["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_alertas",
-    )
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ind = datos_filtrados("indicadores", filtro)
+    render_resumen_filtro(filtro, df_ind[df_ind["fecha"] == fecha_sel] if not df_ind.empty else df_ind,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ind)
 
     fechas_rapido = obtener_fechas_disponibles_rapido()
     crecim = None
@@ -68,9 +66,9 @@ def main():
         idx = list(fechas_rapido).index(fecha_sel)
         if idx + 12 < len(fechas_rapido):
             fecha_anterior = fechas_rapido[idx + 12]
-            crecim = obtener_crecimiento_anual(fecha_sel, fecha_anterior, codigo="21", segmento=segmento_sel, top_n=0)
+            crecim = obtener_crecimiento_anual(fecha_sel, fecha_anterior, codigo="21", filtro=filtro, top_n=0)
 
-    alertas = evaluar_alertas(df_ind, fecha_sel, segmento_sel, crecim)
+    alertas = evaluar_alertas(df_ind, fecha_sel, df_crecimiento_depositos=crecim)
     if alertas.empty:
         st.warning("Sin datos suficientes para esta selección.")
         return
@@ -98,6 +96,14 @@ def main():
         top_n = st.selectbox("Instituciones a mostrar", [20, 40, 0], index=0,
                               format_func=lambda x: "Todas" if x == 0 else f"Top {x}", key="topn_alertas")
         df_r = alertas.head(top_n if top_n else len(alertas))
+        with st.expander("Datos de las alertas (descarga)"):
+            _t = alertas.assign(fecha=pd.Timestamp(fecha_sel)).merge(
+                df_ind[df_ind["fecha"] == fecha_sel][["cooperativa", "entidad", "procedencia_clasif"]].drop_duplicates("cooperativa"),
+                on="cooperativa", how="left")
+            _t = _t[["fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif"] + [c for c in _t.columns if c not in
+                    ("fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif")]]
+            st.dataframe(_t, width="stretch", hide_index=True)
+            botones_descarga(_t, filtro, f"alertas_{pd.Timestamp(fecha_sel):%Y%m}", "Alertas tempranas", "dl_alertas", corte=fecha_sel)
 
         for _, fila in df_r.iterrows():
             clase = _SEMAFORO_CLASE[fila["semaforo"]]
@@ -127,9 +133,9 @@ def main():
         fila = alertas[alertas["cooperativa"] == coop_sel].iloc[0]
 
         codigos = list(REGLAS_ALERTA.keys())
-        df_fecha_ind = df_ind[df_ind["fecha"] == fecha_sel]
-        if segmento_sel != "Todos":
-            df_fecha_ind = df_fecha_ind[df_fecha_ind["segmento"] == segmento_sel]
+        # Percentil relativo: dentro del universo (período, segmentos y calidad), no solo entre las entidades elegidas
+        _univ = datos_universo("indicadores", filtro)
+        df_fecha_ind = _univ[_univ["fecha"] == fecha_sel]
 
         valores_coop = []
         for codigo in codigos:
@@ -195,7 +201,7 @@ def main():
         if len(ventana) < 2:
             st.warning("No hay suficientes meses previos en los datos para evaluar persistencia en esta ventana.")
         else:
-            df_persist = calcular_persistencia_alertas(df_ind, ventana, segmento_sel,
+            df_persist = calcular_persistencia_alertas(df_ind, ventana,
                                                          umbral_persistente_meses=UMBRAL_PERSISTENTE_MESES)
             df_activas = df_persist[df_persist["meses_consecutivos_activa"] > 0]
 
@@ -209,6 +215,10 @@ def main():
             with c4:
                 st.metric("Recurrentes (reaparecen)", int(df_persist["alerta_recurrente"].sum()))
 
+            botones_descarga(df_activas.assign(fecha=pd.Timestamp(fecha_sel)).merge(
+                df_ind[df_ind["fecha"] == fecha_sel][["cooperativa", "entidad", "procedencia_clasif"]].drop_duplicates("cooperativa"),
+                on="cooperativa", how="left"), filtro, f"alertas_persistencia_{pd.Timestamp(fecha_sel):%Y%m}",
+                "Persistencia de alertas", "dl_persist", corte=fecha_sel)
             st.dataframe(
                 df_activas[["cooperativa", "segmento", "meses_consecutivos_activa", "alerta_nueva",
                             "alerta_persistente", "alerta_recurrente", "alertas_rojas_hoy", "alertas_amarillas_hoy"]]
@@ -222,12 +232,12 @@ def main():
             )
 
             st.markdown("#### Amplitud (breadth) de las entidades con alerta roja hoy")
-            df_ranking = cargar_ranking_cooperativas()
+            df_ranking = datos_universo("ranking", filtro)   # amplitud = peso de las afectadas en el universo
             afectadas_rojas = alertas.loc[alertas["alertas_rojas"] > 0, "cooperativa"].tolist()
             if df_ranking.empty or not afectadas_rojas:
                 st.info("Sin entidades con alerta roja en esta fecha/segmento, o sin datos de ranking disponibles.")
             else:
-                breadth = calcular_breadth(afectadas_rojas, df_ranking, fecha_sel, segmento_sel)
+                breadth = calcular_breadth(afectadas_rojas, df_ranking, fecha_sel)
                 b1, b2, b3, b4 = st.columns(4)
                 with b1:
                     st.metric("% entidades afectadas", f"{breadth['pct_entidades']:.1f}%")
@@ -246,7 +256,7 @@ def main():
                 st.caption(
                     f"Umbral analítico (no regulatorio) para 'generalizado': ≥{UMBRAL_GENERALIZADO_PCT:.0f}% "
                     "de activos del sistema en entidades con alerta roja. Universo comparado: "
-                    f"{'sistema completo' if segmento_sel == 'Todos' else segmento_sel}."
+                    f"{', '.join(filtro.segmentos) if filtro.segmentos else 'todos los segmentos'} (clasificación puntual del período)."
                 )
 
             st.markdown("#### Reglas de interacción entre indicadores")

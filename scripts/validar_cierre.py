@@ -12,7 +12,8 @@ def leer(f, c):
 res = {}
 claves = {"pyg.parquet": ["cooperativa","fecha","codigo"], "indicadores.parquet": ["cooperativa","fecha","codigo"],
           "agg_series_temporales.parquet": ["cooperativa","fecha","codigo"], "dim_segmento_historico.parquet": ["cooperativa","fecha"],
-          "solvencia.parquet": ["ruc","fecha"], "entidades_cooperativas.parquet": ["nombre"]}
+          "solvencia.parquet": ["ruc","fecha"], "entidades_cooperativas.parquet": ["nombre"],
+          "dim_observaciones.parquet": ["cooperativa","fecha"]}
 for f, k in claves.items():
     cs = cols(f); d = leer(f, list(dict.fromkeys(k + [c for c in ["segmento","segmento_historico","segmento_historico_estimado","valor","valor_acumulado","es_arrastrado"] if c in cs])))
     r = {"filas": len(d), "duplicados_clave": int(d.duplicated(k).sum()), "clave": k}
@@ -26,6 +27,9 @@ for f, k in claves.items():
     for v in ["valor","valor_acumulado"]:
         if v in d: r["nulos_"+v+"_pct"] = round(float(d[v].isna().mean()*100), 4); r["inf_"+v] = int(np.isinf(d[v].astype(float)).sum())
     if "segmento_historico_estimado" in d: r["estimado_pct"] = round(float(d.segmento_historico_estimado.astype(bool).mean()*100), 3)
+    if f == "dim_observaciones.parquet":
+        _p = pd.read_parquet(MD/f, columns=["procedencia_clasif"]).procedencia_clasif.astype(str)
+        r["procedencia_clasif"] = _p.value_counts().to_dict(); r["procedencia_invalida"] = int((~_p.isin(["oficial_mes","arrastrado","estimado","no_verificable"])).sum())
     if "segmento_historico" in d: r["segmento_historico_nulo_pct"] = round(float(d.segmento_historico.isna().mean()*100), 3)
     res[f] = r
 # balance por lotes
@@ -63,6 +67,7 @@ if "--estricto" in sys.argv:       # errores BLOQUEANTES (exit 1); las advertenc
         if r.get("fecha_max") and r["fecha_max"] != esperado and k not in ("entidades_cooperativas.parquet",): err.append(f"{k}: fecha_max {r['fecha_max']} != corte esperado {esperado}")
         for c in ("duplicados_clave", "duplicados_clave_2026"):
             if r.get(c): err.append(f"{k}: {r[c]} duplicados de clave")
+        if r.get("procedencia_invalida"): err.append(f"{k}: {r['procedencia_invalida']} filas con procedencia_clasif inválida")
     seg = res["balance.parquet"]["entidades_por_segmento_corte"] if False else res["balance.parquet"].get("entidades_por_segmento_corte", {})
     for s in ("SEGMENTO 1", "SEGMENTO 2", "SEGMENTO 3"):
         if not seg.get(s): err.append(f"balance: sin entidades de {s} en el corte {esperado}")

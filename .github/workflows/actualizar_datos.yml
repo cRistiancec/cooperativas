@@ -138,6 +138,13 @@ jobs:
         continue-on-error: true
         run: python scripts/generar_entidades.py
 
+      # Dimensión de observaciones cooperativa-fecha con segmento PUNTUAL y su procedencia (oficial/arrastrado/estimado/no
+      # verificable). Alimenta el filtro global de la app. Un fallo es bloqueante: sin ella los filtros no pueden operar.
+      - name: Generar dimensión de observaciones (filtros globales)
+        id: dim_observaciones
+        if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
+        run: python scripts/generar_dim_observaciones.py
+
       # Panel cooperativa-mes S1-S3 + índice de vulnerabilidad que consume Streamlit.
       # Se regenera SOLO si hubo datos nuevos (o si se fuerza manualmente). Un fallo aquí SÍ es bloqueante:
       # no se publica un corte con datos nuevos y panel obsoleto.

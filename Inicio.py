@@ -15,11 +15,12 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from ui import aplicar_tema, render_filtro_segmento, render_header, render_sidebar
+from ui import aplicar_tema, exigir_datos, render_filtros_globales, render_header, render_resumen_filtro, render_sidebar
 from ui.header import LOGO_PATH
 from utils.charts import crear_sparkline, crear_gauge, COLORES
 from utils.data_loader import (
     cargar_metadata,
+    datos_filtrados,
     obtener_serie_sistema,
     obtener_ultima_fecha,
 )
@@ -79,14 +80,17 @@ def main():
     metadata = cargar_metadata()
 
     render_sidebar(metadata)
+    filtro = render_filtros_globales()           # filtros globales: período, segmentos, entidades, calidad
+    poblacion = datos_filtrados("ranking", filtro)
 
     # Header institucional (marca + estado del sistema)
     render_header(metadata, estado="ok")
 
     # ------------------------------------------------------------------ KPIs
-    cooperativas = metadata.get("cooperativas", 0)
-    meses = metadata.get("meses", 0)
-    anios = _anios_de_historia(metadata)
+    # Los contadores describen la POBLACIÓN SELECCIONADA (período ∩ segmentos ∩ entidades ∩ calidad).
+    cooperativas = int(poblacion["entidad"].nunique()) if not poblacion.empty else 0
+    meses = int(poblacion["fecha"].nunique()) if not poblacion.empty else 0
+    anios = (int(poblacion["fecha"].max().year - poblacion["fecha"].min().year + 1) if not poblacion.empty else 0)
     registros = metadata.get("registros_totales", 0)
     cuentas = metadata.get("cuentas", 0)
 
@@ -105,9 +109,9 @@ def main():
             pass
 
     kpis = [
-        ("Instituciones", f"{cooperativas}", "sps-kpi"),
-        ("Años de historia", f"{anios}", "sps-kpi sps-kpi--petrol"),
-        ("Meses de datos", f"{meses}", "sps-kpi sps-kpi--petrol"),
+        ("Instituciones (selección)", f"{cooperativas}", "sps-kpi"),
+        ("Años en el período", f"{anios}", "sps-kpi sps-kpi--petrol"),
+        ("Meses en el período", f"{meses}", "sps-kpi sps-kpi--petrol"),
         ("Cuentas contables", f"{cuentas:,}", "sps-kpi sps-kpi--green"),
         ("Datos al", fecha_max_str, "sps-kpi sps-kpi--amber"),
     ]
@@ -143,13 +147,8 @@ def main():
 
     st.markdown('<div class="sps-section-title">Indicadores Financieros del Sistema</div>', unsafe_allow_html=True)
 
-    # Filtro Global de Segmento (ui/filtros.py): mismo componente y misma
-    # key de session_state que usan las demás páginas, de modo que el
-    # segmento elegido aquí sigue activo al navegar a Panorama, CAMEL, etc.
-    st.sidebar.markdown("### Filtros")
-    segmento_home = render_filtro_segmento()
-    if segmento_home != "Todos":
-        st.caption(f"Indicadores filtrados por **{segmento_home}**.")
+    render_resumen_filtro(filtro, poblacion, corte=obtener_ultima_fecha())
+    exigir_datos(poblacion)
 
     series_financieras = {
         "Activos Totales": ("1", "sps-kpi"),
@@ -165,7 +164,7 @@ def main():
     series_obtenidas = {}
     cols_fin = st.columns(4)
     for col, (nombre, (codigo, clase)) in zip(cols_fin, series_financieras.items()):
-        serie = obtener_serie_sistema(codigo, segmento_home)
+        serie = obtener_serie_sistema(codigo, filtro)
         series_obtenidas[codigo] = serie
         with col:
             if serie.empty:
@@ -177,7 +176,9 @@ def main():
                 continue
 
             valor_actual = serie["valor_total"].iloc[-1]
-            valor_anterior = serie["valor_total"].iloc[-13] if len(serie) > 12 else None
+            # Variación interanual contra el mismo mes del año anterior (por fecha, no por posición).
+            _prev = serie.loc[serie["fecha"] == serie["fecha"].iloc[-1] - pd.DateOffset(months=12), "valor_total"]
+            valor_anterior = _prev.iloc[0] if len(_prev) else None
             delta = (
                 ((valor_actual - valor_anterior) / valor_anterior * 100)
                 if valor_anterior and valor_anterior > 0 else None

@@ -14,9 +14,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.data_loader import (
     cargar_catalogo_cuentas_balance,
-    cargar_balance_por_codigos,
-    obtener_ranking_rapido,
     cargar_metadata,
+    datos_filtrados,
+    obtener_cooperativas_filtro,
+    obtener_ranking_rapido,
 )
 from analytics.financial_engine import calcular_crecimiento_yoy_mensual
 from utils.charts import (
@@ -27,7 +28,11 @@ from utils.charts import (
 )
 from config.indicator_mapping import obtener_color_cooperativa
 from config.constants import MESES
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
+from ui.filtros import multiselect_validado
 
 # =============================================================================
 # CONFIGURACION
@@ -260,7 +265,7 @@ def obtener_serie_cooperativa(df: pd.DataFrame, cooperativa: str, codigo: str) -
 
 
 @st.cache_data
-def _serie_sistema_balance(df: pd.DataFrame, codigo: str, segmento: str = "Todos") -> pd.DataFrame:
+def _serie_sistema_balance(df: pd.DataFrame, codigo: str) -> pd.DataFrame:
     """
     Serie temporal agregada del sistema calculada sobre el DataFrame de balance
     ya cargado en la página.
@@ -271,9 +276,7 @@ def _serie_sistema_balance(df: pd.DataFrame, codigo: str, segmento: str = "Todos
     1-2. Se renombró con prefijo `_` para dejar explícito que es la variante
     local sobre el balance completo, y no una duplicación de la otra.
     """
-    df_filtrado = df[df['codigo'] == codigo].copy()
-    if segmento != "Todos":
-        df_filtrado = df_filtrado[df_filtrado['segmento'] == segmento]
+    df_filtrado = df[df['codigo'] == codigo].copy()       # `df` ya viene restringido por los filtros globales
     serie = df_filtrado.groupby('fecha')['valor'].sum().reset_index()
     serie['valor_millones'] = serie['valor'] / 1_000_000
     serie = serie.sort_values('fecha')
@@ -283,13 +286,23 @@ def _serie_sistema_balance(df: pd.DataFrame, codigo: str, segmento: str = "Todos
 @st.cache_data
 def obtener_datos_heatmap_mensual(df_completo: pd.DataFrame, codigo: str, cooperativas: list = None,
                                    fecha_inicio: pd.Timestamp = None, fecha_fin: pd.Timestamp = None,
-                                   segmento: str = "Todos") -> pd.DataFrame:
-    """Prepara datos para heatmap de crecimiento YoY mensual por cooperativa."""
+                                   claves_visibles: pd.DataFrame = None) -> pd.DataFrame:
+    """
+    Prepara datos para heatmap de crecimiento YoY mensual por cooperativa.
+
+    `df_completo` incluye 12 meses ANTERIORES al período (misma entidad, sin restricción de segmento/calidad) solo
+    como base del cálculo YoY. Se muestran únicamente las celdas cuyo (cooperativa, fecha) está en `claves_visibles`,
+    es decir, las que cumplen el filtro completo.
+    """
     # El cálculo de crecimiento YoY mes a mes está centralizado en
     # analytics/crecimiento.py::calcular_crecimiento_yoy_mensual() desde el
     # 14-sep-2026 (hardening) — antes se reimplementaba aquí. Misma fórmula,
     # mismo resultado (verificado por CrecimientoYoYMensualTests).
-    df_filtrado = calcular_crecimiento_yoy_mensual(df_completo, codigo, segmento=segmento, cooperativas=cooperativas)
+    df_filtrado = calcular_crecimiento_yoy_mensual(df_completo, codigo, segmento="Todos", cooperativas=cooperativas)
+    if claves_visibles is not None and not df_filtrado.empty:
+        k = claves_visibles[['cooperativa', 'fecha']].drop_duplicates()
+        df_filtrado = df_filtrado.assign(cooperativa=df_filtrado['cooperativa'].astype(str)).merge(
+            k.assign(cooperativa=k['cooperativa'].astype(str)), on=['cooperativa', 'fecha'], how='inner', validate='many_to_one')
 
     if df_filtrado.empty:
         return pd.DataFrame()
@@ -325,17 +338,13 @@ def obtener_datos_heatmap_mensual(df_completo: pd.DataFrame, codigo: str, cooper
 
 
 @st.cache_data
-def obtener_valores_cooperativas_mes(df: pd.DataFrame, codigo: str, fecha: pd.Timestamp,
-                                      segmento: str = "Todos") -> pd.DataFrame:
+def obtener_valores_cooperativas_mes(df: pd.DataFrame, codigo: str, fecha: pd.Timestamp) -> pd.DataFrame:
     """Obtiene valores de todas las cooperativas para una cuenta y mes específicos."""
     df_filtrado = df[
         (df['codigo'] == codigo) &
         (df['fecha'].dt.year == fecha.year) &
         (df['fecha'].dt.month == fecha.month)
     ].copy()
-
-    if segmento != "Todos":
-        df_filtrado = df_filtrado[df_filtrado['segmento'] == segmento]
 
     if df_filtrado.empty:
         return pd.DataFrame()
@@ -397,33 +406,25 @@ def main():
         st.info("Ejecuta primero el script de procesamiento: `python scripts/procesar_balance_cooperativas.py`")
         return
 
-    # Lista de cooperativas y fechas — usar funciones rápidas pre-agregadas
-    from utils.data_loader import obtener_cooperativas_por_segmento
-    cooperativas = obtener_cooperativas_por_segmento("Todos")
-
-    # Rango de fechas disponibles
-    fecha_min = pd.Timestamp(metadata['fecha_min'])
-    fecha_max = pd.Timestamp(metadata['fecha_max'])
-
     # ==========================================================================
-    # SIDEBAR
+    # FILTROS GLOBALES (período ∩ segmentos ∩ entidades ∩ calidad): únicos para toda la página
     # ==========================================================================
-
-    st.sidebar.markdown("### Filtros Globales")
-
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_global = render_filtro_segmento()
+    filtro = render_filtros_globales()
+    fecha_corte = selector_fecha_corte(filtro)
+    cooperativas = obtener_cooperativas_filtro(filtro)
+    poblacion = datos_filtrados("ranking", filtro)
+    render_resumen_filtro(filtro, poblacion[poblacion["fecha"] == fecha_corte] if not poblacion.empty else poblacion,
+                          corte=pd.Timestamp(metadata['fecha_max']), fecha_analisis=fecha_corte)
+    exigir_datos(poblacion)
+    fecha_min, fecha_max = pd.Timestamp(filtro.fecha_ini), pd.Timestamp(filtro.fecha_fin)
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Información")
-    st.sidebar.markdown(f"**Datos disponibles:** {fecha_min.strftime('%b %Y')} - {fecha_max.strftime('%b %Y')}")
-    st.sidebar.markdown(f"**Cooperativas:** {len(cooperativas)}")
+    st.sidebar.markdown(f"**Período:** {fecha_min.strftime('%b %Y')} - {fecha_max.strftime('%b %Y')}")
+    st.sidebar.markdown(f"**Cooperativas en la selección:** {len(cooperativas)}")
 
-    # Obtener top cooperativas para defaults — usar pre-agregados (rápido)
-    df_ranking_default = obtener_ranking_rapido(
-        fecha_max, '1', top_n=5,
-        segmento=segmento_global if segmento_global != "Todos" else "Todos"
-    )
+    # Top cooperativas para los valores por defecto (activos en la fecha de análisis, dentro de la selección)
+    df_ranking_default = obtener_ranking_rapido(fecha_corte, '1', top_n=5, filtro=filtro)
     top_cooperativas_default = df_ranking_default['cooperativa'].tolist() if not df_ranking_default.empty else []
 
     # ==========================================================================
@@ -527,19 +528,13 @@ def main():
     # Selector de cooperativas
     st.markdown("**Cooperativas a Comparar:**")
 
-    # Filtrar cooperativas por segmento si aplica — usar pre-agregados
-    if segmento_global != "Todos":
-        cooperativas_filtradas = obtener_cooperativas_por_segmento(segmento_global)
-    else:
-        cooperativas_filtradas = cooperativas
-
-    cooperativas_seleccionadas = st.multiselect(
+    cooperativas_seleccionadas = multiselect_validado(
         "Selecciona hasta 10 cooperativas",
-        options=cooperativas_filtradas,
-        default=top_cooperativas_default[:5] if top_cooperativas_default else cooperativas_filtradas[:5],
+        options=cooperativas,
+        default=top_cooperativas_default[:5] if top_cooperativas_default else cooperativas[:5],
         max_selections=10,
         key="cooperativas_evol",
-        label_visibility="collapsed"
+        label_visibility="collapsed",
     )
 
     # Gráfico + Filtros de tiempo
@@ -547,34 +542,7 @@ def main():
 
     with col_tiempo:
         st.markdown("**Período**")
-        mes_inicio = st.selectbox(
-            "Mes desde",
-            options=list(range(1, 13)),
-            format_func=lambda x: MESES[x],
-            index=0,
-            key="mes_inicio_evol"
-        )
-        ano_inicio_evol = st.selectbox(
-            "Año desde",
-            options=range(fecha_min.year, fecha_max.year + 1),
-            index=max(0, 2020 - fecha_min.year),
-            key="ano_inicio_evol"
-        )
-        st.markdown("---")
-        mes_fin = st.selectbox(
-            "Mes hasta",
-            options=list(range(1, 13)),
-            format_func=lambda x: MESES[x],
-            index=11,
-            key="mes_fin_evol"
-        )
-        ano_fin_evol = st.selectbox(
-            "Año hasta",
-            options=range(fecha_min.year, fecha_max.year + 1),
-            index=fecha_max.year - fecha_min.year,
-            key="ano_fin_evol"
-        )
-
+        st.caption(f"{fecha_min:%m/%Y} – {fecha_max:%m/%Y} (filtro global)")
         st.markdown("---")
 
         modo_viz = st.radio(
@@ -585,23 +553,8 @@ def main():
         )
         incluir_sistema = st.checkbox("Incluir Total Sistema", value=False, key="sistema_evol")
 
-    # Crear fechas de filtro
-    fecha_inicio_evol = pd.Timestamp(f"{ano_inicio_evol}-{mes_inicio:02d}-01")
-    if mes_fin == 12:
-        fecha_fin_evol = pd.Timestamp(f"{ano_fin_evol}-12-31")
-    else:
-        fecha_fin_evol = pd.Timestamp(f"{ano_fin_evol}-{mes_fin + 1:02d}-01") - pd.Timedelta(days=1)
-
-    # Filtrar datos — acotado a la cuenta seleccionada (pushdown), no al
-    # balance completo
-    df_evol = cargar_balance_por_codigos((codigo_cuenta_final,))
-    df_evol = df_evol[
-        (df_evol['fecha'] >= fecha_inicio_evol) &
-        (df_evol['fecha'] <= fecha_fin_evol)
-    ]
-
-    if segmento_global != "Todos":
-        df_evol = df_evol[df_evol['segmento'] == segmento_global]
+    # Datos de la cuenta seleccionada para la población filtrada (período, segmentos, entidades y calidad ya aplicados)
+    df_evol = datos_filtrados("balance", filtro, (codigo_cuenta_final,))
 
     # Obtener nombre de la cuenta
     cuenta_info = catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_cuenta_final]['cuenta'].iloc[0] if \
@@ -615,7 +568,7 @@ def main():
             # Serie del sistema (si necesario)
             serie_sistema_data = None
             if modo_viz == "Participación %" or incluir_sistema:
-                serie_sistema = _serie_sistema_balance(df_evol, codigo_cuenta_final, segmento_global)
+                serie_sistema = _serie_sistema_balance(df_evol, codigo_cuenta_final)
                 if not serie_sistema.empty:
                     serie_sistema_data = serie_sistema
 
@@ -642,6 +595,10 @@ def main():
 
             fig_evol = _crear_evolucion_cached(series_data, f"Evolución: {titulo_cuenta}", y_title, incluir_sistema_data)
             st.plotly_chart(fig_evol, width='stretch')
+            _ev = df_evol[df_evol['cooperativa'].astype(str).isin(cooperativas_seleccionadas)][['fecha', 'cooperativa', 'entidad', 'segmento', 'procedencia_clasif', 'codigo', 'cuenta', 'valor']]
+            with st.expander("Datos de la evolución (descarga)"):
+                st.dataframe(_ev, width="stretch", hide_index=True)
+                botones_descarga(_ev, filtro, f"balance_evolucion_{codigo_cuenta_final}", "Evolución de balance", "dl_bal_evol", corte=fecha_corte)
         else:
             st.info("Selecciona al menos una cooperativa para visualizar.")
 
@@ -743,8 +700,12 @@ def main():
     cuenta_info_heat = catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_cuenta_heat]['cuenta'].iloc[0] if \
         not catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_cuenta_heat].empty else codigo_cuenta_heat
 
-    # Datos de balance acotados a la cuenta seleccionada (pushdown)
-    df_heat = cargar_balance_por_codigos((codigo_cuenta_heat,))
+    # Población visible (filtro completo) y base del YoY: la misma entidad 12 meses antes del período, sin restricción
+    # de segmento/calidad (el crecimiento compara dos fechas; solo la celda mostrada debe cumplir el filtro).
+    df_heat = datos_filtrados("balance", filtro, (codigo_cuenta_heat,))
+    df_heat_base = datos_filtrados(
+        "balance", filtro.con(segmentos=(), calidad="todas", fecha_ini=fecha_min - pd.DateOffset(months=12)),
+        (codigo_cuenta_heat,))
 
     # Selector de top cooperativas
     top_n_heat = st.selectbox(
@@ -755,62 +716,34 @@ def main():
         key="top_n_heat"
     )
 
-    # Obtener top cooperativas
+    # Obtener top cooperativas (de la población filtrada, a la fecha de análisis)
     if top_n_heat == 0:
-        # Todas las cooperativas del segmento — usar pre-agregados
-        top_cooperativas_heat = obtener_cooperativas_por_segmento(
-            segmento_global if segmento_global != "Todos" else "Todos"
-        )
+        top_cooperativas_heat = cooperativas
     else:
-        df_rank_heat = obtener_ranking_rapido(
-            fecha_max, codigo_cuenta_heat, top_n=top_n_heat,
-            segmento=segmento_global if segmento_global != "Todos" else "Todos"
-        )
+        df_rank_heat = obtener_ranking_rapido(fecha_corte, codigo_cuenta_heat, top_n=top_n_heat, filtro=filtro)
         top_cooperativas_heat = df_rank_heat['cooperativa'].tolist() if not df_rank_heat.empty else []
 
-        # `agg_ranking_cooperativas` solo contiene 9 códigos de nivel 1-2. Para
-        # cualquier cuenta de nivel 3 o 4 el ranking rápido venía vacío, la
-        # lista de top quedaba en [] y el heatmap dejaba de filtrar: mostraba
-        # las ~200 instituciones en vez del "Top 20" que indica el selector.
-        # Se resuelve con la misma función que ya usa la sección de ranking de
-        # esta página, sobre el balance ya cargado en memoria.
+        # `agg_ranking_cooperativas` solo contiene 9 códigos de nivel 1-2. Para cualquier cuenta de nivel 3 o 4 el
+        # ranking rápido viene vacío; se resuelve con el balance ya filtrado de la cuenta.
         if not top_cooperativas_heat:
-            df_top_fallback = obtener_valores_cooperativas_mes(
-                df_heat, codigo_cuenta_heat, pd.Timestamp(fecha_max), segmento_global
-            )
+            df_top_fallback = obtener_valores_cooperativas_mes(df_heat, codigo_cuenta_heat, pd.Timestamp(fecha_corte))
             if not df_top_fallback.empty:
                 top_cooperativas_heat = df_top_fallback.head(top_n_heat)['cooperativa'].tolist()
 
-    # Filtros de tiempo
+    # El período del heatmap es el del filtro global
     col_heat_chart, col_heat_tiempo = st.columns([4, 1])
-
     with col_heat_tiempo:
         st.markdown("**Período**")
-        ano_inicio_heat = st.selectbox(
-            "Año desde",
-            options=range(fecha_min.year, fecha_max.year + 1),
-            index=max(0, 2020 - fecha_min.year),
-            key="ano_inicio_heat"
-        )
-        ano_fin_heat = st.selectbox(
-            "Año hasta",
-            options=range(fecha_min.year, fecha_max.year + 1),
-            index=fecha_max.year - fecha_min.year,
-            key="ano_fin_heat"
-        )
-
-    # Crear fechas de filtro
-    fecha_inicio_heat = pd.Timestamp(f"{ano_inicio_heat}-01-01")
-    fecha_fin_heat = pd.Timestamp(f"{ano_fin_heat}-12-31")
+        st.caption(f"{fecha_min:%m/%Y} – {fecha_max:%m/%Y} (filtro global)")
 
     # Generar datos del heatmap
     heatmap_data = obtener_datos_heatmap_mensual(
-        df_heat,
+        df_heat_base,
         codigo_cuenta_heat,
         top_cooperativas_heat,
-        fecha_inicio_heat,
-        fecha_fin_heat,
-        segmento_global
+        fecha_min,
+        fecha_max,
+        df_heat[['cooperativa', 'fecha']],
     )
 
     with col_heat_chart:
@@ -826,6 +759,13 @@ def main():
                 altura_por_categorias(len(heatmap_data))
             )
             st.plotly_chart(fig_heat, width='stretch')
+            _hm = heatmap_data.reset_index().melt(id_vars='cooperativa', var_name='mes', value_name='crecimiento_yoy_pct')
+            _hm = _hm.merge(df_heat[['cooperativa', 'fecha', 'entidad', 'segmento', 'procedencia_clasif']].assign(
+                cooperativa=lambda x: x['cooperativa'].astype(str), mes=lambda x: x['fecha'].dt.strftime('%Y-%m')),
+                on=['cooperativa', 'mes'], how='left').dropna(subset=['crecimiento_yoy_pct'])
+            with st.expander("Datos del heatmap (descarga)"):
+                st.dataframe(_hm, width="stretch", hide_index=True)
+                botones_descarga(_hm, filtro, f"balance_heatmap_yoy_{codigo_cuenta_heat}", "Heatmap YoY", "dl_bal_heat", corte=fecha_corte)
         else:
             st.warning("No hay datos suficientes para el heatmap.")
 
@@ -927,43 +867,23 @@ def main():
     cuenta_info_rank = catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_rank]['cuenta'].iloc[0] if \
         not catalogo_cuentas[catalogo_cuentas['codigo'] == codigo_rank].empty else codigo_rank
 
-    # Datos de balance acotados a la cuenta seleccionada (pushdown)
-    df_rank = cargar_balance_por_codigos((codigo_rank,))
+    # Población filtrada de la cuenta seleccionada
+    df_rank = datos_filtrados("balance", filtro, (codigo_rank,))
 
-    # Filtros de fecha y top N
-    col_r_mes, col_r_ano, col_r_top = st.columns(3)
+    top_n_rank = st.selectbox(
+        "Mostrar",
+        options=[20, 30, 0],
+        index=0,
+        format_func=lambda x: "Todas" if x == 0 else f"Top {x}",
+        key="top_n_rank"
+    )
 
-    with col_r_mes:
-        mes_r = st.selectbox(
-            "Mes",
-            options=list(MESES.keys()),
-            format_func=lambda x: MESES[x],
-            index=fecha_max.month - 1,
-            key="mes_r"
-        )
-
-    with col_r_ano:
-        ano_r = st.selectbox(
-            "Año",
-            options=range(fecha_min.year, fecha_max.year + 1),
-            index=fecha_max.year - fecha_min.year,
-            key="ano_r"
-        )
-
-    with col_r_top:
-        top_n_rank = st.selectbox(
-            "Mostrar",
-            options=[20, 30, 0],
-            index=0,
-            format_func=lambda x: "Todas" if x == 0 else f"Top {x}",
-            key="top_n_rank"
-        )
-
-    # Construir fecha seleccionada
-    fecha_r = pd.Timestamp(year=ano_r, month=mes_r, day=1)
+    # Fecha del ranking = fecha de análisis global
+    fecha_r = pd.Timestamp(fecha_corte)
+    mes_r, ano_r = fecha_r.month, fecha_r.year
 
     # Obtener datos de ranking
-    datos_ranking = obtener_valores_cooperativas_mes(df_rank, codigo_rank, fecha_r, segmento_global)
+    datos_ranking = obtener_valores_cooperativas_mes(df_rank, codigo_rank, fecha_r)
 
     if not datos_ranking.empty:
         if top_n_rank > 0:
@@ -982,6 +902,11 @@ def main():
             altura
         )
         st.plotly_chart(fig_ranking, width='stretch')
+        _rk = df_rank[(df_rank['fecha'] == fecha_r)][['fecha', 'cooperativa', 'entidad', 'segmento', 'procedencia_clasif', 'codigo', 'valor']]
+        _rk = _rk[_rk['cooperativa'].astype(str).isin(datos_ranking['cooperativa'].astype(str))]
+        with st.expander("Datos del ranking (descarga)"):
+            st.dataframe(_rk, width="stretch", hide_index=True)
+            botones_descarga(_rk, filtro, f"balance_ranking_{codigo_rank}_{fecha_r:%Y%m}", "Ranking de balance", "dl_bal_rank", corte=fecha_corte)
 
         # Estadísticas
         col_s1, col_s2, col_s3 = st.columns(3)

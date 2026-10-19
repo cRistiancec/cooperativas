@@ -27,9 +27,12 @@ from analytics.financial_engine import (
     construir_panel_morosidad_cobertura,
     construir_serie_cartera_vencida,
 )
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES, altura_por_categorias, crear_ranking_barras, truncar_nombres_unicos
-from utils.data_loader import cargar_balance_por_codigos, cargar_indicadores, cargar_metadata
+from utils.data_loader import cargar_metadata, datos_filtrados
 
 st.set_page_config(
     page_title="Riesgo de Crédito | Radar Cooperativo Ecuador",
@@ -46,25 +49,16 @@ def main():
     st.title("🧾 Riesgo de Crédito")
     st.markdown("Morosidad, cobertura y cartera vencida del sistema cooperativo, con indicadores oficiales de la SEPS.")
 
-    df_ind, calidad = cargar_indicadores()
-
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
-
-    fechas = sorted(df_ind["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_credito",
-    )
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ind = datos_filtrados("indicadores", filtro)
+    render_resumen_filtro(filtro, df_ind[df_ind["fecha"] == fecha_sel] if not df_ind.empty else df_ind,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ind)
 
     # ---------------------------------------------------------------- KPIs
     df_mor_tot = df_ind[(df_ind["codigo"] == "MOR_TOT") & (df_ind["fecha"] == fecha_sel)]
     df_cob_tot = df_ind[(df_ind["codigo"] == "COB_TOT") & (df_ind["fecha"] == fecha_sel)]
-    if segmento_sel != "Todos":
-        df_mor_tot = df_mor_tot[df_mor_tot["segmento"] == segmento_sel]
-        df_cob_tot = df_cob_tot[df_cob_tot["segmento"] == segmento_sel]
-
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Morosidad Total (promedio)", f"{df_mor_tot['valor'].mean() * 100:,.1f}%" if not df_mor_tot.empty else "—")
@@ -84,7 +78,7 @@ def main():
 
     # ------------------------------------------------------------ TAB 1
     with tab1:
-        panel = construir_panel_morosidad_cobertura(df_ind, fecha_sel, segmento_sel)
+        panel = construir_panel_morosidad_cobertura(df_ind, fecha_sel)
         col_izq, col_der = st.columns(2)
 
         with col_izq:
@@ -126,13 +120,17 @@ def main():
             df_r = df_r.nsmallest(30, "valor_pct")
             fig = crear_ranking_barras(df_r, x_col="valor_pct", y_col="cooperativa", formato_valor="{:.1f}%")
             st.plotly_chart(fig, width="stretch")
+            with st.expander("Datos del ranking (descarga)"):
+                _t = df_r[["fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif", "codigo", "valor", "valor_pct"]]
+                st.dataframe(_t, width="stretch", hide_index=True)
+                botones_descarga(_t, filtro, f"credito_ranking_mor_{pd.Timestamp(fecha_sel):%Y%m}", "Ranking de morosidad", "dl_cred_rank", corte=fecha_sel)
         else:
             st.info("Sin datos para esta selección.")
 
     # ------------------------------------------------------------ TAB 3
     with tab3:
-        df_bal = cargar_balance_por_codigos((CODIGO_CARTERA_VENCIDA, CODIGO_PROVISION_CARTERA))
-        serie_cv = construir_serie_cartera_vencida(df_bal, segmento_sel)
+        df_bal = datos_filtrados("balance", filtro, (CODIGO_CARTERA_VENCIDA, CODIGO_PROVISION_CARTERA))
+        serie_cv = construir_serie_cartera_vencida(df_bal) if not df_bal.empty else df_bal
         if not serie_cv.empty:
             fig = px.line(serie_cv, x="fecha", y="valor_millones", color="cuenta", markers=True,
                           labels={"fecha": "Fecha", "valor_millones": "USD Millones", "cuenta": ""})
@@ -142,6 +140,10 @@ def main():
             fig.update_xaxes(gridcolor=COLORES["grid"])
             fig.update_yaxes(gridcolor=COLORES["grid"])
             st.plotly_chart(fig, width="stretch")
+            with st.expander("Datos de la serie (descarga)"):
+                st.dataframe(serie_cv, width="stretch", hide_index=True)
+                botones_descarga(serie_cv, filtro, "credito_cartera_vencida_provisiones",
+                                 "Cartera vencida y provisiones (suma de la selección)", "dl_cred_cv", corte=fecha_sel)
         else:
             st.info("Sin datos suficientes.")
 
@@ -155,8 +157,6 @@ def main():
     # ------------------------------------------------------------ TAB 4
     with tab4:
         df_mor_serie = df_ind[df_ind["codigo"] == "MOR_TOT"].copy()
-        if segmento_sel != "Todos":
-            df_mor_serie = df_mor_serie[df_mor_serie["segmento"] == segmento_sel]
 
         if not df_mor_serie.empty:
             top_n = st.selectbox("Cooperativas a mostrar", [20, 30, 0], index=0,
