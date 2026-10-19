@@ -1,0 +1,19 @@
+nombre_fuente,nombre_corregido,regla,filas_balance,fecha_min,fecha_max,gemelo_existente_en_balance
+BAÃ‘OS LTDA,BAÑOS LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,10360,2018-01-31,2018-07-31,False
+CAÃ‘AR LTDA,CAÑAR LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+COOPERATIVA DE AHORRO Y CRÃ‰DITO PROVIDA LTDA,PROVIDA LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,16228,2021-01-31,2021-12-31,True
+COOPERATIVA DE AHORRO Y CRÃ‰DITO SAN ANTONIO LTDA LOS RÃOS,SAN ANTONIO LTDA LOS RÍOS,reparar_mojibake(cp1252->utf8)+normalizar_nombre,16228,2021-01-31,2021-12-31,True
+"COOPERATIVA DE AHORRO Y CRÃ‰DITO SOLIDARIDAD, EMPRENDIMIENTO Y COOPERACIÃ“N","SOLIDARIDAD, EMPRENDIMIENTO Y COOPERACIÓN",reparar_mojibake(cp1252->utf8)+normalizar_nombre,26665,2020-06-30,2021-12-31,True
+COOPERATIVA DE AHORRO Y CRÃ‰DITO YUYAY LTDA,YUYAY LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,16228,2021-01-31,2021-12-31,True
+CRECER WIÃ‘ARI LTDA,CRECER WIÑARI LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+DE LA PEQUEÃ‘A EMPRESA BIBLIAN LTDA,DE LA PEQUEÑA EMPRESA BIBLIAN LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+DE LA PEQUEÃ‘A EMPRESA CACPE LOJA LTDA,DE LA PEQUEÑA EMPRESA CACPE LOJA LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+DE LA PEQUEÃ‘A EMPRESA CACPE YANTZAZA LTDA,DE LA PEQUEÑA EMPRESA CACPE YANTZAZA LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+DE LA PEQUEÃ‘A EMPRESA CACPE ZAMORA CHINCHIPE LTDA,DE LA PEQUEÑA EMPRESA CACPE ZAMORA CHINCHIPE LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+DE LA PEQUEÃ‘A EMPRESA DE COTOPAXI LTDA,DE LA PEQUEÑA EMPRESA DE COTOPAXI LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+DE LA PEQUEÃ‘A EMPRESA DE PASTAZA LTDA,DE LA PEQUEÑA EMPRESA DE PASTAZA LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+DE LA PEQUEÃ‘A EMPRESA GUALAQUIZA,DE LA PEQUEÑA EMPRESA GUALAQUIZA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+FASAYÃ‘AN LTDA,FASAYÑAN LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+GAÃ‘ANSOL LTDA,GAÑANSOL LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+PABLO MUÃ‘OZ VEGA LTDA,PABLO MUÑOZ VEGA LTDA,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True
+SEÃ‘OR DE GIRON,SEÑOR DE GIRON,reparar_mojibake(cp1252->utf8)+normalizar_nombre,69772,2018-01-31,2021-12-31,True

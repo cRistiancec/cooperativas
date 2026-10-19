@@ -193,6 +193,23 @@ def procesar_zip_anual(zip_path: Path) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+def fusionar_con_previo(nuevo: pd.DataFrame, ruta_previa: Path) -> pd.DataFrame:
+    """Conserva la historia ya publicada: lo recién procesado manda sobre el mismo (ruc, fecha), pero los meses
+    que ya no están en los ZIP descargados NO se pierden (el workflow solo descarga el año más reciente)."""
+    if not Path(ruta_previa).exists():
+        return nuevo
+    previo = pd.read_parquet(ruta_previa)
+    if previo.empty:
+        return nuevo
+    cols = list(nuevo.columns)
+    previo = previo[[c for c in cols if c in previo.columns]].copy()
+    for c in ("ruc", "cooperativa", "cooperativa_raw", "grupo_fuente", "archivo_origen"):
+        if c in previo: previo[c] = previo[c].astype(str)
+        if c in nuevo: nuevo = nuevo.assign(**{c: nuevo[c].astype(str)})
+    out = pd.concat([previo, nuevo[cols]], ignore_index=True)
+    return out.drop_duplicates(subset=["ruc", "fecha"], keep="last")
+
+
 def generar_solvencia_parquet():
     """Genera/actualiza master_data/solvencia.parquet a partir de patrimonio_tecnico/*.zip."""
     print("=" * 60)
@@ -253,6 +270,7 @@ def generar_solvencia_parquet():
         "solvencia_recalculada_ptc_appr", "discrepancia_solvencia", "archivo_origen",
     ]
     df = df[columnas_finales].drop_duplicates(subset=["ruc", "fecha"], keep="last")
+    df = fusionar_con_previo(df, OUTPUT_PARQUET)   # no pisar la historia previa (defecto detectado en el cierre)
     df = df.sort_values(["fecha", "ruc"]).reset_index(drop=True)
 
     # Dtypes compactos, coherentes con el resto del proyecto (category para texto repetido).

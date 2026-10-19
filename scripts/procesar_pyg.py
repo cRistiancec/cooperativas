@@ -17,8 +17,10 @@ import warnings
 
 try:
     from io_atomico import guardar_parquet_atomico
+    from segmento_historico import acoplar_segmento
 except ModuleNotFoundError:
     from scripts.io_atomico import guardar_parquet_atomico
+    from scripts.segmento_historico import acoplar_segmento
 
 warnings.filterwarnings('ignore')
 
@@ -305,6 +307,10 @@ def procesar_pyg():
         'valor_acumulado', 'valor_mes', 'valor_12m'
     ]
     df_final = df_final[columnas_finales]
+
+    # Segmento point-in-time desde la dimensión única (misma fuente que balance
+    # y CAMEL). Donde no hay cobertura queda marcado como ESTIMADO.
+    df_final, _rep_seg = acoplar_segmento(df_final, 'pyg')
 
     # Optimizar tipos de datos para reducir memoria
     for col in ['segmento', 'segmento_actual', 'segmento_historico', 'cooperativa', 'codigo', 'cuenta']:

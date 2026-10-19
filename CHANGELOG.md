@@ -6,6 +6,30 @@ ni se alteran resultados numéricos.
 
 ---
 
+## [Sin publicar] — Segmento histórico desde la fuente
+- `Entidades trimestral` (portal SEPS) como fuente oficial del segmento por corte; arrastre point-in-time (nunca futuro) con `es_arrastrado` y `fecha_corte_origen`.
+- `scripts/backfill_segmento_desde_fuente.py`, `--acoplar-master` (por lotes, 25 M de filas) y `--actualizar-entidades`.
+- `descargar_datos_seps.extraer_download_id` recorre todos los paneles homónimos (2018-2019 viven en un segundo panel).
+- Balance/PyG/indicadores con `segmento_historico` + `segmento_historico_estimado`; workflow actualiza la dimensión en cada corrida.
+- Hallazgo: nombres con mojibake en balance 2020-2021; ZIP mensuales 2020-2025 del portal son boletines de un solo corte.
+
+## [Segmento histórico] — 2026-10-17 — Ingesta con segmento point-in-time desde el origen
+
+### Añadido
+- `scripts/segmento_historico.py` y `master_data/dim_segmento_historico.parquet` (ver `docs/SEGMENTACION_HISTORICA.md`).
+- `agg_metricas_sistema_historico.parquet` (métricas por `segmento_historico`).
+- Puerta de validación de segmentos en `validar_actualizacion.py` y paso de verificación en el workflow.
+- `tests/test_segmento_historico.py` (14 pruebas, incluida ingesta extremo a extremo con cambio de segmento).
+
+### Cambiado
+- Balance, PyG, CAMEL y entidades acoplan `segmento_historico` desde la dimensión única.
+- El workflow versiona la dimensión y su bitácora de cambios.
+
+### Pendiente (requiere los ZIP originales)
+- Ejecutar `--rehidratar` para reemplazar el segmento ESTIMADO de 2018-2025 por el oficial.
+
+---
+
 ## [Fase 1] — 2026-07-22 — Identidad institucional + tema premium
 
 ### Añadido

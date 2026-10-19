@@ -40,6 +40,61 @@ def _rango_fechas(path: Path) -> tuple[pd.Timestamp, pd.Timestamp, int]:
     return fechas.min(), fechas.max(), len(fechas)
 
 
+SEGMENTOS_VALIDOS_DIM = SEGMENTOS_ESPERADOS | {"SEGMENTO 4", "SEGMENTO 5"}
+COLUMNAS_SEGMENTO = ["segmento_historico", "segmento_historico_estimado"]
+
+
+def validar_segmentos(fecha_fuente: pd.Timestamp,
+                      dim_path: Path | None = None,
+                      datasets: dict[str, Path] | None = None) -> None:
+    """Puerta del segmento point-in-time. ERROR si el corte nuevo no trae segmento
+    oficial acoplado; ADVERTENCIA (impresa) si el historial aún está estimado."""
+    import pyarrow.parquet as pq
+    dim_path = Path(dim_path or MASTER_DATA_DIR / "dim_segmento_historico.parquet")
+    datasets = datasets or {k: DATASETS_CON_FECHA[k] for k in ("balance", "pyg", "camel")}
+    if not dim_path.exists():
+        raise ValueError(
+            "Falta master_data/dim_segmento_historico.parquet. Reconstruirla una vez con "
+            "`python scripts/segmento_historico.py --rehidratar <ZIPs históricos>`.")
+    dim = pd.read_parquet(dim_path)
+    dim["fecha"] = pd.to_datetime(dim["fecha"])
+    malos = set(dim["segmento_historico"].unique()) - SEGMENTOS_VALIDOS_DIM
+    if malos:
+        raise ValueError(f"dim_segmento_historico con etiquetas inválidas: {sorted(malos)}")
+    if dim.duplicated(["cooperativa", "fecha"]).any():
+        raise ValueError("dim_segmento_historico con duplicados cooperativa-fecha")
+    if fecha_fuente not in set(dim["fecha"]):
+        raise ValueError(f"dim_segmento_historico no contiene el corte {fecha_fuente.date()}")
+    meses_dim = set(dim["fecha"].unique())
+    huecos = [str(f.date()) for f in pd.date_range(dim["fecha"].min(), fecha_fuente, freq="ME")
+              if f not in meses_dim]
+    if huecos:
+        raise ValueError(f"dim_segmento_historico con meses sin segmento: {huecos[:6]}")
+
+    ultimo = dim[dim["fecha"] == fecha_fuente]
+    for nombre, path in datasets.items():
+        faltan = [c for c in COLUMNAS_SEGMENTO if c not in pq.ParquetFile(path).schema_arrow.names]
+        if faltan:
+            raise ValueError(f"{nombre} no tiene las columnas {faltan}: el segmento histórico "
+                             "no se acopló en la ingesta")
+        cols = pd.read_parquet(path, columns=["fecha", "cooperativa"] + COLUMNAS_SEGMENTO)
+        cols["fecha"] = pd.to_datetime(cols["fecha"])
+        mes = cols[cols["fecha"] == fecha_fuente]
+        if mes["segmento_historico_estimado"].astype(bool).any():
+            raise ValueError(f"{nombre}: hay registros de {fecha_fuente.date()} con segmento "
+                             "ESTIMADO; el corte nuevo debe traer segmento oficial")
+        sin_dim = set(mes["cooperativa"].astype(str)) - set(ultimo["cooperativa"].astype(str))
+        if nombre == "balance" and sin_dim:
+            raise ValueError(f"balance: {len(sin_dim)} cooperativas del corte sin fila en la "
+                             f"dimensión (ej.: {sorted(sin_dim)[:3]})")
+        pct = float(cols.drop_duplicates(["cooperativa", "fecha"])["segmento_historico_estimado"]
+                    .astype(bool).mean() * 100)
+        print(f"  segmento {nombre}: {pct:.1f}% de pares cooperativa-mes aún ESTIMADOS"
+              + ("  <-- ADVERTENCIA: rehidratar historial" if pct > 0 else ""))
+    n_seg = dim.groupby("cooperativa")["segmento_historico"].nunique()
+    print(f"  segmento: {int((n_seg > 1).sum())} cooperativas con reclasificación registrada")
+
+
 def validar(fecha_anterior: datetime | None = None) -> None:
     zips = sorted(BALANCES_DIR.glob("*.zip"))
     if not zips:
@@ -79,6 +134,8 @@ def validar(fecha_anterior: datetime | None = None) -> None:
                 f"{nombre} no contiene todos los segmentos en "
                 f"{fecha_fuente.date()}: {', '.join(sorted(faltantes))}"
             )
+
+    validar_segmentos(fecha_fuente)
 
     if rangos["balance"][0] > pd.Timestamp("2018-01-31"):
         raise ValueError("El balance perdió historia anterior a 2018-01-31")

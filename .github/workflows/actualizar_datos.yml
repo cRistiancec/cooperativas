@@ -9,8 +9,23 @@ on:
     - cron: '0 6 20 * *'   # Día 20 a las 6 AM UTC (2do reintento)
     - cron: '0 6 22 * *'   # Día 22 a las 6 AM UTC (3er reintento)
 
-  # También permite correrlo manualmente desde GitHub → Actions
+  # También permite correrlo manualmente desde GitHub → Actions.
+  # Seguro por defecto: una ejecución manual NO publica (no hace commit/push) salvo publicar=true.
   workflow_dispatch:
+    inputs:
+      forzar_panel:
+        description: 'Regenerar panel, validar y probar aunque no haya mes nuevo (usa master_data actual, sin reprocesar)'
+        type: boolean
+        default: false
+      publicar:
+        description: 'Hacer commit/push de los resultados (solo si hay cambios reales)'
+        type: boolean
+        default: false
+
+# Evita ejecuciones solapadas que podrían producir commits duplicados o en conflicto.
+concurrency:
+  group: actualizar-datos-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write   # Necesario para hacer push de los parquet actualizados
@@ -68,6 +83,20 @@ jobs:
         if: steps.descarga.outputs.datos_nuevos == 'true'
         run: python scripts/procesar_balance_cooperativas.py
 
+      # CRÍTICO: el segmento oficial de cada mes (columna SEGMENTO de los archivos
+      # SEPS) debe quedar acoplado en master_data/dim_segmento_historico.parquet.
+      # Falla si hay meses sin segmento, duplicados o etiquetas inválidas.
+      # Segmento point-in-time de los meses sin archivo mensual con SEGMENTO: se toma
+      # del registro oficial "Entidades trimestral" del portal SEPS (fuente, sin
+      # archivos externos) y se arrastra desde el último corte <= mes.
+      - name: Actualizar segmento desde Entidades trimestral (portal SEPS)
+        if: steps.descarga.outputs.datos_nuevos == 'true'
+        run: python scripts/segmento_historico.py --actualizar-entidades
+
+      - name: Verificar segmento histórico acoplado
+        if: steps.descarga.outputs.datos_nuevos == 'true'
+        run: python scripts/segmento_historico.py --verificar
+
       - name: Generar datos pre-agregados
         if: steps.descarga.outputs.datos_nuevos == 'true'
         run: python scripts/generar_agregados.py
@@ -108,6 +137,51 @@ jobs:
         if: steps.descarga.outputs.datos_nuevos == 'true'
         continue-on-error: true
         run: python scripts/generar_entidades.py
+
+      # Panel cooperativa-mes S1-S3 + índice de vulnerabilidad que consume Streamlit.
+      # Se regenera SOLO si hubo datos nuevos (o si se fuerza manualmente). Un fallo aquí SÍ es bloqueante:
+      # no se publica un corte con datos nuevos y panel obsoleto.
+      - name: Instalar dependencias del panel y de las pruebas
+        id: deps_panel
+        if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Regenerar panel de vulnerabilidad (S1-S3)
+        id: panel
+        if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/panel"
+          python analytics/construir_panel.py . "$RUNNER_TEMP/panel"
+          python -m analytics.vulnerabilidad.run_all "$RUNNER_TEMP/panel/panel_cooperativas_S1S3.parquet" reports/vulnerabilidad master_data/panel_vulnerabilidad.parquet
+          cp "$RUNNER_TEMP/panel/calidad_panel.json" reports/vulnerabilidad/calidad_panel.json
+
+      # Reduce el peso de master_data/ (orden físico + zstd) sin pérdida de datos. Verifica bit a bit
+      # contra el original antes de reemplazar; un fallo es bloqueante.
+      - name: Optimizar peso de los Parquet (lossless)
+        id: optimizar
+        if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
+        run: python scripts/optimizar_parquet.py
+
+      - name: Validación estricta de componentes (corte, claves, segmentos)
+        id: validacion_estricta
+        if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
+        run: python scripts/validar_cierre.py --estricto
+
+      - name: Ejecutar pruebas automatizadas
+        id: pruebas
+        if: steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true'
+        run: python -m unittest discover -s tests
+
+      - name: Publicar evidencia como artefacto
+        if: always() && (steps.descarga.outputs.datos_nuevos == 'true' || github.event.inputs.forzar_panel == 'true')
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencia-actualizacion
+          path: |
+            docs/cierre/validacion_componentes.json
+            reports/vulnerabilidad/*.json
+            reports/vulnerabilidad/cobertura_segmentos.csv
+          retention-days: 30
 
       # Validación CRÍTICA: si falla, el job debe terminar en FAILED (sin
       # continue-on-error) — nunca se publica un resultado "aparentemente
@@ -160,7 +234,7 @@ jobs:
           SIZE=$(stat -c%s master_data/balance.parquet 2>/dev/null || echo 0)
           LIMIT=$((95 * 1024 * 1024))
           if [ "$SIZE" -gt "$LIMIT" ]; then
-            echo "::warning::balance.parquet supera 95 MB ($((SIZE / 1024 / 1024)) MB). Considerar compresión adicional."
+            echo "::warning::balance.parquet supera 95 MB ($((SIZE / 1024 / 1024)) MB). Considerar Git LFS o particionar por año."
           fi
 
       # 8. Configurar git y hacer commit + push
@@ -171,7 +245,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Commit y push de datos actualizados
-        if: steps.descarga.outputs.datos_nuevos == 'true'
+        if: steps.descarga.outputs.datos_nuevos == 'true' && (github.event_name == 'schedule' || github.event.inputs.publicar == 'true')
         run: |
           # Verificar si hay cambios
           git add \
@@ -179,12 +253,16 @@ jobs:
             master_data/pyg.parquet \
             master_data/indicadores.parquet \
             master_data/agg_*.parquet \
-            master_data/metadata*.json
+            master_data/metadata*.json \
+            master_data/dim_segmento_historico.parquet \
+            master_data/entidades_trimestral.parquet
+          git add master_data/dim_segmento_historico_cambios.json 2>/dev/null || true
 
           # Solvencia FS01 y tabla de identidad son best-effort (paso previo
           # puede no haber generado el archivo, p. ej. sin ZIP nuevo de
           # Patrimonio Técnico) — no deben tumbar el commit si faltan.
           git add master_data/solvencia.parquet master_data/entidades_cooperativas.parquet 2>/dev/null || true
+          git add master_data/panel_vulnerabilidad.parquet master_data/equivalencias_nombres.csv reports/vulnerabilidad docs/cierre/validacion_componentes.json 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No hay cambios en los datos. Nada que commitear."
