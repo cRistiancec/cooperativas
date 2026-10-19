@@ -18,9 +18,12 @@ import streamlit as st
 
 from models.forecast import evaluar_backtest, forecast_serie
 from models.prediccion_morosidad import entrenar_y_evaluar, proyectar_proximo_mes
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES
-from utils.data_loader import cargar_indicadores, cargar_metadata, cargar_metricas_sistema
+from utils.data_loader import cargar_indicadores, cargar_metadata, datos_filtrados, obtener_serie_sistema
 
 st.set_page_config(
     page_title="Modelos Predictivos | Radar Cooperativo Ecuador",
@@ -37,21 +40,15 @@ _SERIES_DISPONIBLES = {
 }
 
 
-@st.cache_data(ttl=3600)
-def _serie_sistema(codigo: str, segmento: str = "Todos") -> pd.Series:
+def _serie_sistema(codigo: str, filtro) -> pd.Series:
     """
-    Serie mensual del sistema para ARIMA, con filtro opcional por segmento.
-
-    Usa el mismo agregado (`agg_metricas_sistema`) y la misma lógica de suma
-    que el resto de la plataforma, de modo que la serie proyectada coincide
-    exactamente con la que muestran los KPIs del home y de Panorama.
+    Serie mensual de la población filtrada para ARIMA: suma de las entidades que cumplen el filtro en cada mes
+    (clasificación puntual). Sin restricciones reproduce exactamente el agregado del sistema (`agg_metricas_sistema`).
     """
-    df = cargar_metricas_sistema()
-    df_f = df[df["codigo"] == codigo]
-    if segmento != "Todos":
-        df_f = df_f[df_f["segmento"] == segmento]
-    serie = df_f.groupby("fecha", observed=True)["valor_total"].sum().sort_index()
-    serie.index = pd.DatetimeIndex(serie.index, freq="ME")
+    df = obtener_serie_sistema(codigo, filtro)
+    serie = df.set_index("fecha")["valor_total"].sort_index()
+    serie.index = pd.DatetimeIndex(serie.index)
+    serie.index.freq = pd.infer_freq(serie.index) if len(serie) >= 3 else None
     return serie
 
 
@@ -83,8 +80,12 @@ def main():
     # proyección de morosidad (tab 2). Antes cada tab tenía su propio
     # selector de segmento independiente; ahora comparten el mismo valor,
     # consistente con el resto de la plataforma.
-    st.sidebar.markdown("### Filtros")
-    segmento_sel = render_filtro_segmento()
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ind = datos_filtrados("indicadores", filtro)
+    render_resumen_filtro(filtro, df_ind[df_ind["fecha"] == fecha_sel] if not df_ind.empty else df_ind,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ind)
 
     tab1, tab2 = st.tabs(["📈 Forecast del Sistema (ARIMA)", "🌲 Predicción de Morosidad (Random Forest)"])
 
@@ -96,8 +97,13 @@ def main():
         with col_pasos:
             pasos = st.slider("Meses a proyectar", 3, 12, 6, key="pasos_forecast")
 
-        serie = _serie_sistema(_SERIES_DISPONIBLES[variable_sel], segmento_sel)
+        serie = _serie_sistema(_SERIES_DISPONIBLES[variable_sel], filtro)
+        serie = serie[serie.index <= fecha_sel]
 
+        if len(serie) < 24:
+            st.warning(f"La serie filtrada tiene {len(serie)} meses; el forecast ARIMA y su backtest requieren más historia. "
+                       "Amplíe el período o relaje los segmentos/entidades.")
+            return
         try:
             resultado = forecast_serie(serie, pasos=pasos)
             backtest = evaluar_backtest(serie, pasos_holdout=6)
@@ -132,6 +138,16 @@ def main():
         fig.update_yaxes(gridcolor=COLORES["grid"])
         st.plotly_chart(fig, width="stretch")
 
+        _fc = pd.concat([
+            pd.DataFrame({"fecha": serie.index, "valor": serie.values, "tipo": "histórico"}),
+            pd.DataFrame({"fecha": list(resultado["fechas_futuras"]), "valor": list(resultado["valores"]), "tipo": "forecast"}),
+        ])
+        with st.expander("Datos del forecast (descarga)"):
+            st.dataframe(_fc, width="stretch", hide_index=True)
+            botones_descarga(_fc.assign(variable=variable_sel), filtro, f"forecast_{_SERIES_DISPONIBLES[variable_sel]}",
+                             f"Forecast ARIMA — {variable_sel}", "dl_forecast", corte=fecha_sel)
+        st.caption("Serie = suma de las entidades que cumplen el filtro en cada mes; la composición puede variar entre meses.")
+
         st.caption(
             f"El modelo se re-entrena en cada ejecución sobre el histórico real ({len(serie)} meses). El MAPE de "
             "backtest se calcula ocultando los últimos 6 meses reales, prediciéndolos, y comparando contra "
@@ -140,7 +156,7 @@ def main():
 
     # ------------------------------------------------------------ TAB 2
     with tab2:
-        resultado_mora, df_ind = _modelo_morosidad_entrenado()
+        resultado_mora, _ = _modelo_morosidad_entrenado()
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -186,10 +202,10 @@ def main():
 
         st.markdown("---")
         st.markdown("**Proyección de morosidad — próximo mes**")
-        if segmento_sel != "Todos":
-            st.caption(f"Filtrado por **{segmento_sel}** (Filtro Global de Segmento, sidebar).")
+        st.caption("El modelo se entrena con todo el histórico del sistema (no con la selección: con pocas entidades no sería válido); "
+                   f"el filtro global determina qué entidades se proyectan, con datos a {pd.Timestamp(fecha_sel):%m/%Y}.")
 
-        proyeccion = proyectar_proximo_mes(resultado_mora["modelo"], df_ind, segmento_sel)
+        proyeccion = proyectar_proximo_mes(resultado_mora["modelo"], df_ind[df_ind["fecha"] <= fecha_sel])
         if not proyeccion.empty:
             st.dataframe(
                 proyeccion.head(30).rename(columns={
@@ -200,6 +216,10 @@ def main():
                 width="stretch", height=420,
             )
             st.caption("Ordenado por mayor deterioro proyectado (variación en puntos porcentuales).")
+            _pr = proyeccion.assign(fecha=pd.Timestamp(fecha_sel)).merge(
+                df_ind[df_ind["fecha"] == fecha_sel][["cooperativa", "entidad", "procedencia_clasif"]].drop_duplicates("cooperativa"),
+                on="cooperativa", how="left")
+            botones_descarga(_pr, filtro, f"morosidad_proyeccion_{pd.Timestamp(fecha_sel):%Y%m}", "Proyección de morosidad", "dl_mora_proy", corte=fecha_sel)
         else:
             st.info("Sin datos suficientes para esta selección.")
 

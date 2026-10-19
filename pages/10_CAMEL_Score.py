@@ -17,9 +17,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analytics.financial_engine import CATEGORIAS_CAMEL, calcular_score_camel, clasificar_score
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES, altura_por_categorias, crear_radar, crear_ranking_barras, truncar_nombres_unicos
-from utils.data_loader import cargar_indicadores, cargar_metadata
+from utils.data_loader import acotar_entidades, cargar_metadata, datos_filtrados, datos_universo
 
 st.set_page_config(
     page_title="CAMEL Score | Radar Cooperativo Ecuador",
@@ -41,22 +44,25 @@ def main():
     st.title("🧮 CAMEL — Score Compuesto")
     st.markdown("Score 0-100 por institución (100 = mejor desempeño relativo), calculado a partir de percentiles de indicadores oficiales SEPS.")
 
-    df_ind, calidad = cargar_indicadores()
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ind = datos_filtrados("indicadores", filtro)
+    render_resumen_filtro(filtro, df_ind[df_ind["fecha"] == fecha_sel] if not df_ind.empty else df_ind,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ind)
 
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
-
-    fechas = sorted(df_ind["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_score",
-    )
-
-    score = calcular_score_camel(df_ind, fecha_sel, segmento_sel)
+    df_univ = datos_universo("indicadores", filtro)
+    score = calcular_score_camel(df_univ, fecha_sel)
     if score.empty:
         st.warning("Sin datos suficientes para esta selección.")
         return
+    _meta = df_univ[df_univ["fecha"] == fecha_sel][["cooperativa", "entidad", "procedencia_clasif"]].drop_duplicates("cooperativa")
+    score = acotar_entidades(score.merge(_meta, on="cooperativa", how="left"), filtro).sort_values("score_total", ascending=False).reset_index(drop=True)
+    if score.empty:
+        st.warning("Las entidades seleccionadas no tienen indicadores en la fecha de análisis.")
+        return
+    st.caption(f"Score relativo calculado sobre el universo de {df_univ.loc[df_univ['fecha'] == fecha_sel, 'entidad'].nunique()} entidades "
+               "(período, segmentos y calidad seleccionados)" + ("; se muestran solo las entidades elegidas." if filtro.entidades else "."))
 
     score["clasificacion"] = score["score_total"].apply(clasificar_score)
     distribucion = score["clasificacion"].value_counts()
@@ -88,6 +94,9 @@ def main():
                 }).round({"Score": 1}),
                 width="stretch", height=380,
             )
+            _t = score.assign(fecha=pd.Timestamp(fecha_sel))
+            _t = _t[["fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif"] + [c for c in _t.columns if c.startswith("score") ] + ["clasificacion"]]
+            botones_descarga(_t, filtro, f"camel_score_{pd.Timestamp(fecha_sel):%Y%m}", "Score CAMEL compuesto", "dl_score", corte=fecha_sel)
 
     with tab2:
         coop_sel = st.selectbox("Cooperativa", score["cooperativa"].tolist(), key="coop_radar_score")

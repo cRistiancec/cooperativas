@@ -75,6 +75,8 @@ def construir_contexto_sistema(
         "",
         "Datos reales del sistema (última actualización disponible):",
         f"- Instituciones: {metadata.get('cooperativas', 'N/D')}",
+        *([f"- Selección activa del usuario (filtros globales; todas las cifras se refieren a esta población): "
+           f"{metadata['seleccion_activa']}"] if metadata.get('seleccion_activa') else []),
         f"- Período de datos: {metadata.get('fecha_min', 'N/D')[:7] if metadata.get('fecha_min') else 'N/D'} "
         f"a {metadata.get('fecha_max', 'N/D')[:7] if metadata.get('fecha_max') else 'N/D'}",
         f"- Registros de balance procesados: {metadata.get('registros_totales', 'N/D')}",

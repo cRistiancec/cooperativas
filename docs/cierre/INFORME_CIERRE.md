@@ -80,3 +80,8 @@ Patrimonio negativo: **real** (20 observaciones, 7 entidades; pérdidas acumulad
 4. [L] 30 salidas del panel sin registro posterior no se interpretan como quiebras (posibles fusiones).
 5. [L] Capitalización = proxy (A−P)/A; la solvencia regulatoria solo existe para S1/mutualistas/FINANCOOP.
 6. [P] Fusión del PR #1 (requiere autorización expresa) y verificación en Streamlit Cloud (requiere acceso del propietario de la app).
+
+## 11. Filtros globales (rama `feature/filtros-globales`)
+Filtro único período ∩ segmentos ∩ entidades ∩ calidad de clasificación en todas las páginas; segmento puntual con procedencia explícita.
+Documentación: `docs/FILTROS_GLOBALES.md`. Pruebas locales: 206 OK (`python3 -m unittest discover -s tests`) y E2E de descargas con Chromium OK.
+Estado: validado localmente; **producción pendiente** (no se ha verificado el despliegue ni se ha fusionado el PR).

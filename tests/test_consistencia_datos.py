@@ -33,9 +33,11 @@ MASTER_DATA = REPO_ROOT / "master_data"
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from ui.filtros import SPS_SEGMENTO_KEY  # noqa: E402
+from ui.filtros import W_FECHA  # noqa: E402
+from utils.filtros_analisis import FiltroAnalisis, filtro_por_defecto  # noqa: E402
 from utils.charts import altura_por_categorias, truncar_nombre, truncar_nombres_unicos  # noqa: E402
 from utils.data_loader import (  # noqa: E402
+    cargar_dim_observaciones,
     cargar_entidades,
     cargar_metadata,
     cargar_pyg,
@@ -48,6 +50,11 @@ from utils.data_loader import (  # noqa: E402
     obtener_serie_sistema,
     obtener_ultima_fecha,
 )
+
+
+def _filtro_total() -> FiltroAnalisis:
+    """Filtro sin restricciones (todos los segmentos, entidades y calidades, período completo)."""
+    return filtro_por_defecto(cargar_dim_observaciones())
 
 # Páginas que ofrecen análisis por cooperativa/segmento y deben usar el
 # Filtro Global de Segmento (ui/filtros.py). Excluida pages/15_Asistente_IA.py:
@@ -68,6 +75,11 @@ PAGINAS_CON_FILTRO_SEGMENTO = [
     "pages/12_Stress_Testing.py",
     "pages/13_Modelos_Predictivos.py",
     "pages/14_Machine_Learning.py",
+    "pages/15_Asistente_IA.py",
+    "pages/16_Resumen_Validado.py",
+    "pages/17_Comparativo_Segmentos.py",
+    "pages/18_Vulnerabilidad_Ficha.py",
+    "pages/19_Calidad_Trazabilidad.py",
 ]
 
 # Fuentes con columna `fecha` que deben compartir el mismo corte.
@@ -81,19 +93,13 @@ FUENTES_CON_FECHA = [
 ]
 
 # Páginas con selector "Fecha de análisis" y la clave de ese selector.
-PAGINAS_CON_SELECTOR_FECHA = [
-    ("pages/1_Panorama.py", "fecha_panorama"),
-    ("pages/4_CAMEL.py", "fecha_camel"),
-    ("pages/5_Riesgo_Liquidez.py", "fecha_liq"),
-    ("pages/6_Riesgo_Credito.py", "fecha_credito"),
-    ("pages/7_Riesgo_Solvencia.py", "fecha_solv"),
-    ("pages/8_Riesgo_Concentracion.py", "fecha_conc"),
-    ("pages/9_Riesgo_Sistemico.py", "fecha_sist"),
-    ("pages/10_CAMEL_Score.py", "fecha_score"),
-    ("pages/11_Alertas_Tempranas.py", "fecha_alertas"),
-    ("pages/12_Stress_Testing.py", "fecha_stress"),
-    ("pages/14_Machine_Learning.py", "fecha_ml"),
-]
+# Tras el filtro global, TODAS comparten el mismo selector (`W_FECHA`, `ui.filtros.selector_fecha_corte`).
+PAGINAS_CON_SELECTOR_FECHA = [(ruta, W_FECHA) for ruta in [
+    "pages/1_Panorama.py", "pages/3_Perdidas_Ganancias.py", "pages/4_CAMEL.py", "pages/5_Riesgo_Liquidez.py",
+    "pages/6_Riesgo_Credito.py", "pages/7_Riesgo_Solvencia.py", "pages/8_Riesgo_Concentracion.py",
+    "pages/9_Riesgo_Sistemico.py", "pages/10_CAMEL_Score.py", "pages/11_Alertas_Tempranas.py",
+    "pages/12_Stress_Testing.py", "pages/14_Machine_Learning.py",
+]]
 
 
 def _fecha_max(nombre_archivo: str) -> pd.Timestamp:
@@ -159,7 +165,7 @@ class ConsistenciaEntreModulosTests(unittest.TestCase):
         df["fecha"] = pd.to_datetime(df["fecha"])
         crudo = df[df["fecha"] == self.ultimo]["valor"].sum()
 
-        serie = obtener_serie_sistema("1")
+        serie = obtener_serie_sistema("1", _filtro_total())
         agregado = serie["valor_total"].iloc[-1]
 
         self.assertAlmostEqual(
@@ -169,7 +175,7 @@ class ConsistenciaEntreModulosTests(unittest.TestCase):
 
     def test_home_y_panorama_muestran_la_misma_cifra(self):
         """El home usa `obtener_serie_sistema`; Panorama usa `obtener_metricas_kpi`."""
-        metricas = obtener_metricas_kpi(self.ultimo, "Todos")
+        metricas = obtener_metricas_kpi(self.ultimo, _filtro_total())
         for nombre_kpi, codigo in [
             ("total_activos", "1"),
             ("total_cartera", "14"),
@@ -177,33 +183,42 @@ class ConsistenciaEntreModulosTests(unittest.TestCase):
             ("total_patrimonio", "3"),
         ]:
             with self.subTest(kpi=nombre_kpi):
-                serie = obtener_serie_sistema(codigo)
+                serie = obtener_serie_sistema(codigo, _filtro_total())
                 self.assertAlmostEqual(
                     metricas[nombre_kpi], serie["valor_total"].iloc[-1] / 1e6, places=2,
                     msg=f"{nombre_kpi} difiere entre el home y Panorama.",
                 )
 
     def test_los_segmentos_suman_el_total_del_sistema(self):
-        """El filtro por segmento particiona los datos: no duplica ni pierde."""
-        total = obtener_serie_sistema("1")["valor_total"].iloc[-1]
-        suma_segmentos = sum(
-            obtener_serie_sistema("1", seg)["valor_total"].iloc[-1]
-            for seg in obtener_segmentos_disponibles_rapido()
-        )
-        self.assertAlmostEqual(total / 1e6, suma_segmentos / 1e6, places=2)
+        """
+        El filtro particiona los datos: no duplica ni pierde. Se verifica por calidad de clasificación (las cuatro
+        procedencias cubren todo) y por segmento puntual (segmentos + observaciones sin clasificación verificable).
+        """
+        f0, ultimo = _filtro_total(), self.ultimo
+
+        def en_corte(filtro):
+            s = obtener_serie_sistema("1", filtro)
+            return s.loc[s["fecha"] == ultimo, "valor_total"].sum()
+
+        total = en_corte(f0)
+        por_calidad = sum(en_corte(f0.con(calidad=c)) for c in ("oficial", "arrastrada", "estimada", "no_verificable"))
+        self.assertAlmostEqual(total / 1e6, por_calidad / 1e6, places=2)
+        por_segmento = sum(en_corte(f0.con(segmentos=(seg,))) for seg in obtener_segmentos_disponibles_rapido()) \
+            + en_corte(f0.con(calidad="no_verificable"))
+        self.assertAlmostEqual(total / 1e6, por_segmento / 1e6, places=2)
 
     def test_el_ranking_completo_cuadra_con_el_kpi_agregado(self):
         """Ranking (por cooperativa) y métricas (por segmento) vienen del mismo balance."""
-        ranking = obtener_ranking_rapido(self.ultimo, codigo="1", top_n=0, segmento="Todos")
-        metricas = obtener_metricas_kpi(self.ultimo, "Todos")
+        ranking = obtener_ranking_rapido(self.ultimo, codigo="1", top_n=0, filtro=_filtro_total())
+        metricas = obtener_metricas_kpi(self.ultimo, _filtro_total())
         self.assertAlmostEqual(
             ranking["valor"].sum() / 1e6, metricas["total_activos"], places=2,
             msg="La suma del ranking de activos no coincide con el KPI del sistema.",
         )
 
     def test_el_numero_de_instituciones_coincide_con_el_ranking(self):
-        metricas = obtener_metricas_kpi(self.ultimo, "Todos")
-        ranking = obtener_ranking_rapido(self.ultimo, codigo="1", top_n=0, segmento="Todos")
+        metricas = obtener_metricas_kpi(self.ultimo, _filtro_total())
+        ranking = obtener_ranking_rapido(self.ultimo, codigo="1", top_n=0, filtro=_filtro_total())
         self.assertEqual(int(metricas["num_cooperativas"]), ranking["cooperativa"].nunique())
 
 
@@ -225,11 +240,17 @@ class SegmentacionTests(unittest.TestCase):
                 )
 
     def test_los_segmentos_expuestos_en_la_ui_son_los_de_los_datos(self):
+        """
+        Los segmentos de la UI son los de la clasificación PUNTUAL (dimensión de observaciones) y todos existen en la
+        dimensión histórica oficial (no se inventan categorías). Ojo: el segmento actual retroactivo de los archivos legados
+        NO los contiene todos — p. ej. un segmento que hoy ya no tiene entidades solo aparece en el historial puntual.
+        """
         segmentos_ui = obtener_segmentos_disponibles_rapido()
-        segmentos_datos = sorted(
-            str(s) for s in cargar_ranking_cooperativas()["segmento"].unique()
-        )
-        self.assertEqual(sorted(segmentos_ui), segmentos_datos)
+        dim = cargar_dim_observaciones()
+        _h = cargar_segmento_historico()
+        historica = {str(s) for c in ("segmento_historico", "segmento_historico_estimado", "segmento_actual") for s in _h[c].dropna().unique()}
+        self.assertEqual(sorted(segmentos_ui), sorted(dim["segmento_clasif"].dropna().unique()))
+        self.assertTrue(set(segmentos_ui) <= historica, f"segmentos de la UI ausentes en la dimensión histórica: {set(segmentos_ui) - historica}")
 
     def test_toda_cooperativa_tiene_segmento_asignado(self):
         catalogo = pq.read_table(
@@ -415,14 +436,14 @@ class RentabilidadYCrecimientoConDatosRealesTests(unittest.TestCase):
 
     def test_crecimiento_captaciones_es_consistente_con_su_propia_resta(self):
         from analytics.financial_engine import crecimiento_captaciones
-        df = crecimiento_captaciones(self.ultimo, self.hace_un_anio, "Todos")
+        df = crecimiento_captaciones(self.ultimo, self.hace_un_anio, _filtro_total())
         self.assertFalse(df.empty, "Sin datos de crecimiento de captaciones en el último año disponible.")
         diferencia = df["crecimiento_absoluto"] - (df["depositos_actual"] - df["depositos_anterior"])
         self.assertTrue((diferencia.abs() < 1e-6).all())
 
     def test_crecimiento_colocaciones_es_consistente_con_su_propia_resta(self):
         from analytics.financial_engine import crecimiento_colocaciones
-        df = crecimiento_colocaciones(self.ultimo, self.hace_un_anio, "Todos")
+        df = crecimiento_colocaciones(self.ultimo, self.hace_un_anio, _filtro_total())
         self.assertFalse(df.empty, "Sin datos de crecimiento de colocaciones en el último año disponible.")
         diferencia = df["crecimiento_absoluto"] - (df["cartera_actual"] - df["cartera_anterior"])
         self.assertTrue((diferencia.abs() < 1e-6).all())
@@ -443,135 +464,34 @@ class RentabilidadYCrecimientoConDatosRealesTests(unittest.TestCase):
 
 class FiltroGlobalSegmentoTests(unittest.TestCase):
     """
-    Fase 3 (ampliación) — el segmento es una dimensión global, no un filtro
-    aislado por página: un único componente (`ui/filtros.py`), una única
-    `key` de `session_state`, y el valor persiste al navegar entre módulos.
+    El período, los segmentos, las entidades y la calidad de clasificación son dimensiones GLOBALES: un único componente
+    (`ui/filtros.py::render_filtros_globales`), claves planas de `session_state` (`sps_f_*`) y un único selector de fecha.
+    Las pruebas funcionales de punta a punta (15 casos obligatorios) están en `tests/test_filtros_paginas.py`.
     """
 
-    _PATRON_SELECTBOX_SEGMENTO_PROPIO = re.compile(
-        r'st\.(?:sidebar\.)?selectbox\(\s*["\']Segmento["\']'
-    )
+    _PATRON_SELECTBOX_SEGMENTO_PROPIO = re.compile(r'st\.(?:sidebar\.)?(?:selectbox|multiselect)\(\s*["\']Segmentos?["\']')
 
-    def test_ninguna_pagina_define_su_propio_selectbox_de_segmento(self):
-        """
-        Antes de `ui/filtros.py` cada página declaraba
-        `st.sidebar.selectbox("Segmento", ...)` con una key propia. Este test
-        falla si alguna página vuelve a hacerlo en vez de reutilizar
-        `render_filtro_segmento()` — evita que el filtro se vuelva a
-        fragmentar en el futuro.
-        """
+    def test_ninguna_pagina_define_su_propio_selector_de_segmento(self):
+        """Evita que el filtro vuelva a fragmentarse: ninguna página declara su propio selector de segmento."""
         for ruta in PAGINAS_CON_FILTRO_SEGMENTO:
             with self.subTest(pagina=ruta):
                 codigo = (REPO_ROOT / ruta).read_text(encoding="utf-8")
-                self.assertIsNone(
-                    self._PATRON_SELECTBOX_SEGMENTO_PROPIO.search(codigo),
-                    f"{ruta} define su propio selectbox de segmento en vez de "
-                    "reutilizar render_filtro_segmento().",
-                )
+                self.assertIsNone(self._PATRON_SELECTBOX_SEGMENTO_PROPIO.search(codigo),
+                                  f"{ruta} define su propio selector de segmento en vez de reutilizar render_filtros_globales().")
 
-    def test_toda_pagina_relevante_importa_el_filtro_global(self):
+    def test_toda_pagina_usa_el_filtro_global(self):
         for ruta in PAGINAS_CON_FILTRO_SEGMENTO:
             with self.subTest(pagina=ruta):
                 codigo = (REPO_ROOT / ruta).read_text(encoding="utf-8")
-                self.assertIn(
-                    "render_filtro_segmento", codigo,
-                    f"{ruta} no usa render_filtro_segmento().",
-                )
+                self.assertIn("render_filtros_globales", codigo, f"{ruta} no usa render_filtros_globales().")
 
-    def test_la_pagina_se_hidrata_desde_el_valor_persistente(self):
-        """
-        `render_filtro_segmento()` copia `session_state[SPS_SEGMENTO_KEY]`
-        (persistente) a la key interna del widget ANTES de crearlo
-        (`_cargar_valor_persistente`). Se precarga la key persistente y se
-        confirma que el widget "Segmento" nace ya con ese valor, sin
-        excepción, en una muestra de páginas de distinto tipo (Panorama usa
-        agregados; Crédito e indicadores; Modelos Predictivos entrena
-        modelos).
-
-        NOTA: esto prueba la hidratación *dentro de una página*, no la
-        navegación real entre páginas — `AppTest` ejecuta cada script de
-        forma aislada y no reproduce el enrutamiento del cliente de
-        Streamlit. La persistencia real, de punta a punta, se verificó con
-        un navegador real (Playwright) navegando de Inicio a Panorama en la
-        aplicación viva: el segmento elegido en Inicio seguía activo en
-        Panorama. Es exactamente el escenario que motivó reemplazar un
-        `st.selectbox(key=...)` ingenuo por el patrón de "widget con key
-        sombra" que usa este componente — con la key compartida ingenua,
-        Streamlit resetea el widget en cada nueva página aunque la key sea
-        idéntica (comportamiento documentado de las apps multipágina
-        clásicas de carpeta `pages/`, confirmado aquí con un repro mínimo).
-        """
-        muestra = [
-            "pages/1_Panorama.py",
-            "pages/6_Riesgo_Credito.py",
-            "pages/10_CAMEL_Score.py",
-            "pages/13_Modelos_Predictivos.py",
-        ]
-        for ruta in muestra:
-            with self.subTest(pagina=ruta):
-                codigo = f"""
-import warnings; warnings.filterwarnings('ignore')
-from streamlit.testing.v1 import AppTest
-from ui.filtros import SPS_SEGMENTO_KEY
-at = AppTest.from_file({ruta!r}, default_timeout=400)
-at.session_state[SPS_SEGMENTO_KEY] = "SEGMENTO 2"
-at.run()
-if at.exception:
-    print("EXCEPTION:", at.exception[0].value)
-else:
-    sb = next((s for s in list(at.sidebar.selectbox) + list(at.selectbox) if s.label == "Segmento"), None)
-    print("VALOR:", sb.value if sb is not None else "SELECTOR_NO_ENCONTRADO")
-    print("PERSISTENTE:", at.session_state[SPS_SEGMENTO_KEY])
-"""
-                proceso = subprocess.run(
-                    [sys.executable, "-c", codigo],
-                    cwd=REPO_ROOT, capture_output=True, text=True, timeout=420,
-                )
-                salida = proceso.stdout
-                self.assertIn(
-                    "VALOR: SEGMENTO 2", salida,
-                    msg=f"{ruta} no heredó el segmento de session_state. "
-                        f"stdout={salida!r} stderr={proceso.stderr[-400:]!r}",
-                )
-                self.assertIn(
-                    "PERSISTENTE: SEGMENTO 2", salida,
-                    msg=f"{ruta} desincronizó la key persistente respecto al widget.",
-                )
-
-    def test_cambiar_el_widget_actualiza_la_key_persistente(self):
-        """
-        La otra mitad del round-trip: cuando el usuario cambia el selector,
-        `on_change` (`_guardar_valor_persistente`) debe escribir el nuevo
-        valor en `SPS_SEGMENTO_KEY` — es lo que hace que el valor sobreviva
-        para la siguiente página. Se simula el cambio con
-        `selectbox.set_value(...)`, que en `AppTest` dispara el mismo
-        callback `on_change` que un clic real en el navegador.
-        """
-        codigo = """
-import warnings; warnings.filterwarnings('ignore')
-from streamlit.testing.v1 import AppTest
-from ui.filtros import SPS_SEGMENTO_KEY
-at = AppTest.from_file("pages/1_Panorama.py", default_timeout=400)
-at.run()
-sb = next((s for s in list(at.sidebar.selectbox) + list(at.selectbox) if s.label == "Segmento"), None)
-if sb is None:
-    print("EXCEPTION: selector Segmento no encontrado")
-else:
-    opciones = [o for o in sb.options if o != "Todos"]
-    sb.set_value(opciones[0]).run()
-    print("EXCEPTION:", at.exception[0].value) if at.exception else print("OK")
-    print("PERSISTENTE:", at.session_state[SPS_SEGMENTO_KEY])
-"""
-        proceso = subprocess.run(
-            [sys.executable, "-c", codigo],
-            cwd=REPO_ROOT, capture_output=True, text=True, timeout=420,
-        )
-        salida = proceso.stdout
-        self.assertIn("OK", salida, msg=f"stdout={salida!r} stderr={proceso.stderr[-400:]!r}")
-        self.assertNotIn(
-            "PERSISTENTE: Todos", salida,
-            msg="Cambiar el widget no actualizó la key persistente (on_change no disparó).",
-        )
+    def test_ninguna_pagina_usa_la_api_antigua_de_segmento(self):
+        antiguos = ("render_filtro_segmento", "obtener_cooperativas_por_segmento", "segmento_global", "segmento_sel", "VISTAS", "filtrar_vista")
+        for ruta in PAGINAS_CON_FILTRO_SEGMENTO:
+            codigo = (REPO_ROOT / ruta).read_text(encoding="utf-8")
+            for nombre in antiguos:
+                with self.subTest(pagina=ruta, simbolo=nombre):
+                    self.assertNotIn(nombre, codigo, f"{ruta} conserva la API antigua {nombre!r}.")
 
 
 class LegibilidadEtiquetasTests(unittest.TestCase):

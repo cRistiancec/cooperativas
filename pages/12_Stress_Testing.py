@@ -16,9 +16,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analytics.financial_engine import ESCENARIOS, aplicar_escenario, construir_panel_balance
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES, altura_por_categorias, crear_gauge, truncar_nombres_unicos
-from utils.data_loader import cargar_metadata, cargar_ranking_cooperativas
+from utils.data_loader import cargar_metadata, datos_filtrados
 
 st.set_page_config(
     page_title="Stress Testing | Radar Cooperativo Ecuador",
@@ -43,17 +46,12 @@ def main():
         "fondos disponibles. Ver supuestos completos en el expander al final de la página."
     )
 
-    df_ranking = cargar_ranking_cooperativas()
-
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
-
-    fechas = sorted(df_ranking["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_stress",
-    )
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ranking = datos_filtrados("ranking", filtro)
+    render_resumen_filtro(filtro, df_ranking[df_ranking["fecha"] == fecha_sel] if not df_ranking.empty else df_ranking,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ranking)
 
     escenario_sel = st.selectbox("Escenario", list(ESCENARIOS.keys()), index=0, key="escenario_stress")
     parametros = ESCENARIOS[escenario_sel]
@@ -66,7 +64,7 @@ def main():
     with col_p3:
         st.metric("Tasa de pérdida (LGD aprox.)", f"{parametros['tasa_perdida_incremental']:.0%}")
 
-    panel = construir_panel_balance(df_ranking, fecha_sel, segmento_sel)
+    panel = construir_panel_balance(df_ranking, fecha_sel)
     resultado = aplicar_escenario(panel, escenario_sel)
 
     activos_total_pre = resultado["activos"].sum()
@@ -147,6 +145,10 @@ def main():
         df_detalle[["solvencia_pre", "solvencia_post", "liquidez_pre", "liquidez_post"]] = df_detalle[
             ["solvencia_pre", "solvencia_post", "liquidez_pre", "liquidez_post"]
         ].round(1)
+        _exp = df_detalle.assign(fecha=pd.Timestamp(fecha_sel), escenario=escenario_sel).merge(
+            df_ranking[df_ranking["fecha"] == fecha_sel][["cooperativa", "entidad", "procedencia_clasif"]].drop_duplicates("cooperativa"),
+            on="cooperativa", how="left")
+        botones_descarga(_exp, filtro, f"stress_{pd.Timestamp(fecha_sel):%Y%m}", f"Stress testing — {escenario_sel}", "dl_stress", corte=fecha_sel)
         st.dataframe(
             df_detalle.rename(columns={
                 "cooperativa": "Cooperativa", "segmento": "Segmento", "activos": "Activos (USD M)",

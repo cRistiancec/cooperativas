@@ -15,8 +15,8 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.data_loader import (
-    cargar_indicadores,
-    obtener_cooperativas_por_segmento,
+    datos_filtrados,
+    obtener_cooperativas_filtro,
     cargar_metadata,
 )
 from config.indicator_mapping import (
@@ -32,7 +32,11 @@ from utils.charts import (
     truncar_nombre,
     truncar_nombres_unicos,
 )
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
+from ui.filtros import multiselect_validado
 
 # =============================================================================
 # CONFIGURACION
@@ -52,46 +56,29 @@ aplicar_tema()
 # =============================================================================
 
 @st.cache_data
-def obtener_ranking_indicador(df, codigo, fecha, segmento="Todos", top_n=20):
-    """Ranking de cooperativas para un indicador en una fecha."""
+def obtener_ranking_indicador(df, codigo, fecha, top_n=20):
+    """Ranking de cooperativas para un indicador en una fecha. `df` ya viene filtrado por la selección global."""
     df_f = df[(df['codigo'] == codigo) & (df['fecha'] == fecha)]
-    if segmento != "Todos":
-        df_f = df_f[df_f['segmento'] == segmento]
     df_f = df_f.copy()
     df_f['valor_pct'] = df_f['valor'] * 100
     df_f = df_f.sort_values('valor_pct', ascending=False)
-    resultado = df_f[['cooperativa', 'segmento', 'valor', 'valor_pct']]
+    resultado = df_f[['fecha', 'cooperativa', 'entidad', 'segmento', 'procedencia_clasif', 'codigo', 'valor', 'valor_pct']]
     return resultado if top_n == 0 else resultado.head(top_n)
 
 
 @st.cache_data
-def obtener_evolucion_indicador(df, codigo, cooperativas, segmento="Todos",
-                                 fecha_inicio=None, fecha_fin=None):
-    """Serie temporal de un indicador para cooperativas seleccionadas."""
+def obtener_evolucion_indicador(df, codigo, cooperativas):
+    """Serie temporal de un indicador para cooperativas seleccionadas. `df` ya viene filtrado por la selección global."""
     df_f = df[(df['codigo'] == codigo) & (df['cooperativa'].isin(cooperativas))]
-    if segmento != "Todos":
-        df_f = df_f[df_f['segmento'] == segmento]
-    if fecha_inicio is not None:
-        df_f = df_f[df_f['fecha'] >= pd.Timestamp(fecha_inicio)]
-    if fecha_fin is not None:
-        df_f = df_f[df_f['fecha'] <= pd.Timestamp(fecha_fin)]
     df_f = df_f.copy()
     df_f['valor_pct'] = df_f['valor'] * 100
-    return df_f[['fecha', 'cooperativa', 'valor_pct']].sort_values(['cooperativa', 'fecha'])
+    return df_f[['fecha', 'cooperativa', 'entidad', 'segmento', 'procedencia_clasif', 'codigo', 'valor_pct']].sort_values(['cooperativa', 'fecha'])
 
 
 @st.cache_data
-def obtener_heatmap_indicador(df, codigo, cooperativas_ordenadas,
-                               segmento="Todos", fecha_inicio=None,
-                               fecha_fin=None, top_n=15):
-    """Datos para heatmap: cooperativas x periodos."""
+def obtener_heatmap_indicador(df, codigo, cooperativas_ordenadas, top_n=15):
+    """Datos para heatmap: cooperativas x periodos. `df` ya viene filtrado por la selección global."""
     df_f = df[df['codigo'] == codigo].copy()
-    if segmento != "Todos":
-        df_f = df_f[df_f['segmento'] == segmento]
-    if fecha_inicio is not None:
-        df_f = df_f[df_f['fecha'] >= pd.Timestamp(fecha_inicio)]
-    if fecha_fin is not None:
-        df_f = df_f[df_f['fecha'] <= pd.Timestamp(fecha_fin)]
 
     if df_f.empty:
         return pd.DataFrame()
@@ -132,48 +119,33 @@ def main():
     st.title("📈 Indicadores CAMEL")
     st.markdown("Indicadores financieros oficiales del sistema cooperativo ecuatoriano.")
 
-    # Cargar datos
+    # Filtros globales (período ∩ segmentos ∩ entidades ∩ calidad), únicos para toda la plataforma
+    filtro = render_filtros_globales()
+    fecha_seleccionada = selector_fecha_corte(filtro)
     try:
-        df_camel, calidad = cargar_indicadores()
+        df_camel = datos_filtrados("indicadores", filtro)
+        metadata = cargar_metadata()
     except FileNotFoundError:
         st.error("No se encontró el archivo de indicadores.")
         st.info("Ejecuta: `python scripts/procesar_camel.py`")
         return
 
-    if df_camel.empty:
-        st.warning("No hay datos de indicadores disponibles.")
-        return
+    render_resumen_filtro(filtro, df_camel[df_camel['fecha'] == fecha_seleccionada] if not df_camel.empty else df_camel,
+                          corte=pd.Timestamp(metadata['fecha_max']), fecha_analisis=fecha_seleccionada)
+    exigir_datos(df_camel)
+    fecha_min, fecha_max = pd.Timestamp(filtro.fecha_ini), pd.Timestamp(filtro.fecha_fin)
 
-    # Fechas disponibles
-    fechas = sorted(df_camel['fecha'].unique(), reverse=True)
-
-    # Sidebar - Filtros globales
-    st.sidebar.markdown("### Filtros")
-
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_global = render_filtro_segmento()
-
-    fecha_seleccionada = st.sidebar.selectbox(
-        "Fecha de análisis",
-        options=fechas,
-        format_func=lambda x: pd.Timestamp(x).strftime('%B %Y').title(),
-        index=0,
-        key="fecha_camel"
-    )
-
-    # Lista de cooperativas ordenadas por activos
-    cooperativas_ordenadas = obtener_cooperativas_por_segmento(segmento_global)
+    # Cooperativas de la selección ordenadas por activos (para ordenar rankings y valores por defecto)
+    _con_datos = set(df_camel['cooperativa'].astype(str).unique())
+    cooperativas_ordenadas = [c for c in obtener_cooperativas_filtro(filtro) if c in _con_datos]
     if not cooperativas_ordenadas:
-        # Fallback: usar cooperativas del dataset de indicadores
-        cooperativas_ordenadas = sorted(df_camel['cooperativa'].unique())
+        cooperativas_ordenadas = sorted(df_camel['cooperativa'].astype(str).unique())
+    cooperativas_default = cooperativas_ordenadas[:4]
 
-    cooperativas_default = cooperativas_ordenadas[:4] if len(cooperativas_ordenadas) >= 4 else cooperativas_ordenadas
-
-    # Info en sidebar
     st.sidebar.markdown("---")
-    st.sidebar.markdown(f"**Indicadores:** {calidad['indicadores_unicos']}")
-    st.sidebar.markdown(f"**Cooperativas:** {calidad['cooperativas']}")
-    st.sidebar.markdown(f"**Período:** {calidad['fecha_min'].strftime('%Y-%m')} - {calidad['fecha_max'].strftime('%Y-%m')}")
+    st.sidebar.markdown(f"**Indicadores:** {df_camel['codigo'].nunique()}")
+    st.sidebar.markdown(f"**Cooperativas en la selección:** {df_camel['cooperativa'].nunique()}")
+    st.sidebar.markdown(f"**Período:** {fecha_min:%Y-%m} - {fecha_max:%Y-%m}")
 
     # ==========================================================================
     # TABS PRINCIPALES
@@ -220,8 +192,7 @@ def main():
 
         with col_grafico:
             df_ranking = obtener_ranking_indicador(
-                df_camel, indicador_codigo, fecha_seleccionada,
-                segmento_global, top_n
+                df_camel, indicador_codigo, fecha_seleccionada, top_n
             )
 
             if not df_ranking.empty:
@@ -255,6 +226,10 @@ def main():
                 )
 
                 st.plotly_chart(fig, width='stretch')
+                with st.expander("Datos del ranking (descarga)"):
+                    st.dataframe(df_ranking, width="stretch", hide_index=True)
+                    botones_descarga(df_ranking, filtro, f"camel_ranking_{indicador_codigo}_{pd.Timestamp(fecha_seleccionada):%Y%m}",
+                                     "Ranking de indicador CAMEL", "dl_camel_rank", corte=fecha_seleccionada)
 
                 # Estadísticas
                 col_s1, col_s2, col_s3 = st.columns(3)
@@ -291,7 +266,7 @@ def main():
             )
             indicador_codigo_evol = indicador_opciones_evol[indicador_nombre_evol]
 
-            cooperativas_evol = st.multiselect(
+            cooperativas_evol = multiselect_validado(
                 "Cooperativas a comparar",
                 cooperativas_ordenadas,
                 default=cooperativas_default,
@@ -299,38 +274,13 @@ def main():
                 key="cooperativas_evol"
             )
 
-            # Rango de años
-            st.markdown("---")
-            anos_disponibles_evol = sorted(df_camel['fecha'].dt.year.unique())
-
-            col_ae, col_be = st.columns(2)
-            with col_ae:
-                ano_inicio_evol = st.selectbox(
-                    "Año inicio",
-                    anos_disponibles_evol,
-                    index=0,
-                    key="ano_inicio_evol"
-                )
-            with col_be:
-                ano_fin_evol = st.selectbox(
-                    "Año fin",
-                    anos_disponibles_evol,
-                    index=len(anos_disponibles_evol) - 1,
-                    key="ano_fin_evol"
-                )
+            st.caption(f"Período: {fecha_min:%m/%Y} – {fecha_max:%m/%Y} (filtro global)")
 
         with col_grafico2:
             if not cooperativas_evol:
                 st.info("Selecciona al menos una cooperativa para ver la evolución.")
             else:
-                fecha_inicio_evol = pd.Timestamp(year=ano_inicio_evol, month=1, day=1)
-                fecha_fin_evol = pd.Timestamp(year=ano_fin_evol, month=12, day=31)
-
-                df_serie = obtener_evolucion_indicador(
-                    df_camel, indicador_codigo_evol,
-                    cooperativas_evol, segmento_global,
-                    fecha_inicio_evol, fecha_fin_evol
-                )
+                df_serie = obtener_evolucion_indicador(df_camel, indicador_codigo_evol, cooperativas_evol)
 
                 if not df_serie.empty:
                     color_map = {coop: obtener_color_cooperativa(coop) for coop in cooperativas_evol}
@@ -362,6 +312,10 @@ def main():
                     )
 
                     st.plotly_chart(fig_evol, width='stretch')
+                    with st.expander("Datos de la evolución (descarga)"):
+                        st.dataframe(df_serie, width="stretch", hide_index=True)
+                        botones_descarga(df_serie, filtro, f"camel_evolucion_{indicador_codigo_evol}", "Evolución de indicador CAMEL",
+                                         "dl_camel_evol", corte=fecha_seleccionada)
                 else:
                     st.warning("No hay datos disponibles para las cooperativas seleccionadas.")
 
@@ -397,36 +351,11 @@ def main():
                 key="top_n_heat"
             )
 
-            # Rango de años
-            st.markdown("---")
-            anos_disponibles = sorted(df_camel['fecha'].dt.year.unique())
-
-            col_a, col_b = st.columns(2)
-            with col_a:
-                ano_inicio = st.selectbox(
-                    "Año inicio",
-                    anos_disponibles,
-                    index=max(0, len(anos_disponibles) - 3),
-                    key="ano_inicio_heat"
-                )
-            with col_b:
-                ano_fin = st.selectbox(
-                    "Año fin",
-                    anos_disponibles,
-                    index=len(anos_disponibles) - 1,
-                    key="ano_fin_heat"
-                )
+            st.caption(f"Período: {fecha_min:%m/%Y} – {fecha_max:%m/%Y} (filtro global)")
 
         with col_grafico3:
-            fecha_inicio_heat = pd.Timestamp(year=ano_inicio, month=1, day=1)
-            fecha_fin_heat = pd.Timestamp(year=ano_fin, month=12, day=31)
-
             heatmap_data = obtener_heatmap_indicador(
-                df_camel, indicador_codigo_heat,
-                cooperativas_ordenadas,
-                segmento_global,
-                fecha_inicio_heat, fecha_fin_heat,
-                top_n_heat
+                df_camel, indicador_codigo_heat, cooperativas_ordenadas, top_n_heat
             )
 
             if not heatmap_data.empty:
@@ -463,6 +392,14 @@ def main():
                 )
 
                 st.plotly_chart(fig_heat, width='stretch')
+                _hm = heatmap_data.reset_index().melt(id_vars='cooperativa', var_name='periodo', value_name='valor_pct').dropna(subset=['valor_pct'])
+                _hm['fecha'] = pd.to_datetime(_hm['periodo'] + '-01') + pd.offsets.MonthEnd(0)
+                _hm = _hm.merge(df_camel[df_camel['codigo'] == indicador_codigo_heat][['cooperativa', 'fecha', 'entidad', 'segmento', 'procedencia_clasif']],
+                                on=['cooperativa', 'fecha'], how='left')
+                with st.expander("Datos del heatmap (descarga)"):
+                    st.dataframe(_hm, width="stretch", hide_index=True)
+                    botones_descarga(_hm, filtro, f"camel_heatmap_{indicador_codigo_heat}", "Heatmap de indicador CAMEL",
+                                     "dl_camel_heat", corte=fecha_seleccionada)
             else:
                 st.warning("No hay datos suficientes para el heatmap.")
 

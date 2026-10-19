@@ -22,9 +22,12 @@ from analytics.financial_engine import (
     coeficiente_gini,
     curva_lorenz,
 )
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES, altura_por_categorias, crear_lorenz, truncar_nombres_unicos
-from utils.data_loader import cargar_metadata, cargar_ranking_cooperativas
+from utils.data_loader import cargar_metadata, datos_filtrados
 
 st.set_page_config(
     page_title="Riesgo de Concentración | Radar Cooperativo Ecuador",
@@ -41,15 +44,13 @@ _VARIABLES = {
 
 
 @st.cache_data(ttl=3600)
-def _serie_hhi(df_ranking: pd.DataFrame, codigo: str, segmento: str = "Todos") -> pd.DataFrame:
-    """Evolución del HHI en el tiempo para una variable dada."""
+def _serie_hhi(df_ranking: pd.DataFrame, codigo: str) -> pd.DataFrame:
+    """Evolución del HHI de la población filtrada (df ya filtrado) para una variable dada."""
     df_f = df_ranking[df_ranking["codigo"] == codigo]
-    if segmento != "Todos":
-        df_f = df_f[df_f["segmento"] == segmento]
 
     registros = []
     for fecha, grupo in df_f.groupby("fecha", observed=True):
-        registros.append({"fecha": fecha, "hhi": calcular_hhi(grupo["valor"])})
+        registros.append({"fecha": fecha, "hhi": calcular_hhi(grupo["valor"]), "entidades": int(grupo["entidad"].nunique())})
     return pd.DataFrame(registros).sort_values("fecha")
 
 
@@ -60,24 +61,17 @@ def main():
     st.title("🧩 Riesgo de Concentración")
     st.markdown("Concentración de mercado del sistema cooperativo: HHI, razones CR-N, curva de Lorenz y Gini.")
 
-    df_ranking = cargar_ranking_cooperativas()
-
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ranking = datos_filtrados("ranking", filtro)
+    render_resumen_filtro(filtro, df_ranking[df_ranking["fecha"] == fecha_sel] if not df_ranking.empty else df_ranking,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ranking)
 
     variable_sel = st.sidebar.selectbox("Variable", list(_VARIABLES.keys()), index=0, key="var_conc")
     codigo_sel = _VARIABLES[variable_sel]
 
-    fechas = sorted(df_ranking["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_conc",
-    )
-
     mask = (df_ranking["fecha"] == fecha_sel) & (df_ranking["codigo"] == codigo_sel)
-    if segmento_sel != "Todos":
-        mask &= df_ranking["segmento"] == segmento_sel
     valores = df_ranking[mask]["valor"]
 
     hhi = calcular_hhi(valores)
@@ -128,12 +122,16 @@ def main():
                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                            font_color=COLORES["texto"], margin=dict(l=10, r=70, t=20, b=10))
         st.plotly_chart(fig, width="stretch")
+        with st.expander("Datos del Pareto (descarga)"):
+            _t = df_top[["fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif", "codigo", "valor", "participacion_pct"]]
+            st.dataframe(_t, width="stretch", hide_index=True)
+            botones_descarga(_t, filtro, f"concentracion_pareto_{codigo_sel}_{pd.Timestamp(fecha_sel):%Y%m}", "Top 20 por participación", "dl_conc_top", corte=fecha_sel)
 
         acumulado_top20 = df_top["participacion_pct"].sum()
         st.caption(f"Las 20 mayores instituciones concentran el **{acumulado_top20:.1f}%** de {variable_sel.lower()} en el universo filtrado.")
 
     with tab3:
-        serie_hhi = _serie_hhi(df_ranking, codigo_sel, segmento_sel)
+        serie_hhi = _serie_hhi(df_ranking, codigo_sel)
         if not serie_hhi.empty:
             fig = go.Figure(go.Scatter(
                 x=serie_hhi["fecha"], y=serie_hhi["hhi"], mode="lines+markers",
@@ -147,11 +145,15 @@ def main():
             fig.update_xaxes(gridcolor=COLORES["grid"])
             fig.update_yaxes(gridcolor=COLORES["grid"])
             st.plotly_chart(fig, width="stretch")
+            with st.expander("Datos de la serie HHI (descarga)"):
+                st.dataframe(serie_hhi, width="stretch", hide_index=True)
+                botones_descarga(serie_hhi, filtro, f"concentracion_hhi_{codigo_sel}",
+                                 "Serie HHI", "dl_conc_hhi", corte=fecha_sel)
         else:
             st.info("Sin datos suficientes.")
 
     with tab4:
-        df_completo = df_ranking[mask][["cooperativa", "segmento", "valor"]].copy()
+        df_completo = df_ranking[mask][["fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif", "valor"]].copy()
         df_completo["valor_millones"] = df_completo["valor"] / 1_000_000
         df_completo["participacion_pct"] = (df_completo["valor"] / df_completo["valor"].sum() * 100) if df_completo["valor"].sum() > 0 else 0
         df_completo = df_completo.sort_values("valor", ascending=False).reset_index(drop=True)
@@ -163,6 +165,8 @@ def main():
             }),
             width="stretch", height=420,
         )
+        botones_descarga(df_completo.reset_index(drop=True), filtro, f"concentracion_ranking_{codigo_sel}_{pd.Timestamp(fecha_sel):%Y%m}",
+                         "Ranking completo", "dl_conc_full", corte=fecha_sel)
 
 
 if __name__ == "__main__":

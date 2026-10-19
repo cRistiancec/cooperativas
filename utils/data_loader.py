@@ -99,278 +99,265 @@ def cargar_catalogo_cooperativas() -> pd.DataFrame:
 
 
 # =============================================================================
-# FUNCIONES DE CONSULTA OPTIMIZADAS
+# FILTRADO GLOBAL (ÚNICA vía de acceso a datos filtrados por la selección del usuario)
+# =============================================================================
+# La lógica vive en `utils/filtros_analisis.py` (pura, sin Streamlit). Aquí solo se cachean las lecturas y se
+# aplica el filtro sobre cada base. Ninguna función de esta sección usa el segmento ACTUAL retroactivo para filtrar.
+
+SEGMENTO_SIN_CLASIFICAR = "SIN CLASIFICACIÓN VERIFICABLE"
+_COLS_DIM = ["entidad", "cooperativa", "segmento_clasif", "segmento_actual", "procedencia_clasif", "fuente_clasif"]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cargar_dim_observaciones() -> pd.DataFrame:
+    """Dimensión (cooperativa, fecha) -> entidad, segmento puntual y procedencia. Ver scripts/generar_dim_observaciones.py."""
+    ruta = MASTER_DATA_DIR / "dim_observaciones.parquet"
+    if not ruta.exists():
+        return pd.DataFrame(columns=_COLS_DIM + ["fecha"])
+    d = pd.read_parquet(ruta)
+    for c in _COLS_DIM:
+        d[c] = d[c].astype(object)
+    d["fecha"] = pd.to_datetime(d["fecha"])
+    return d
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cargar_identificadores() -> Dict[str, str]:
+    """entidad -> RUC(s) conocidos (solo Segmento 1/Mutualista/FINANCOOP tienen RUC), para búsqueda por identificador."""
+    ruta = MASTER_DATA_DIR / "entidades_cooperativas.parquet"
+    if not ruta.exists():
+        return {}
+    e = pd.read_parquet(ruta, columns=["nombre", "ruc"])
+    e = e[e["ruc"].notna() & (e["ruc"].astype(str).str.strip() != "")]
+    from analytics.vulnerabilidad.identidad import entidad_id
+    e["entidad"] = e["nombre"].map(entidad_id)
+    return e.groupby("entidad")["ruc"].apply(lambda x: " ".join(sorted(set(map(str, x))))).to_dict()
+
+
+def filtrar(df: pd.DataFrame, filtro, col_entidad: str = "cooperativa", col_fecha: str = "fecha") -> pd.DataFrame:
+    """Aplica período ∩ segmentos ∩ entidades ∩ calidad a cualquier DataFrame con (entidad, fecha). Usa la lógica única."""
+    from utils.filtros_analisis import aplicar_filtros_analisis
+    return aplicar_filtros_analisis(df, filtro, cargar_dim_observaciones(), col_fecha=col_fecha, col_entidad=col_entidad)
+
+
+def _presentar(df: pd.DataFrame) -> pd.DataFrame:
+    """`segmento` pasa a ser la clasificación PUNTUAL del período; el segmento actual retroactivo se conserva aparte."""
+    if df.empty:
+        return df
+    if "segmento" in df.columns and "segmento_actual" not in df.columns:
+        df = df.rename(columns={"segmento": "segmento_actual"})
+    seg = df["segmento_clasif"]
+    if isinstance(seg.dtype, pd.CategoricalDtype):
+        seg = seg.cat.add_categories([SEGMENTO_SIN_CLASIFICAR]) if SEGMENTO_SIN_CLASIFICAR not in seg.cat.categories else seg
+    df["segmento"] = seg.fillna(SEGMENTO_SIN_CLASIFICAR)
+    return df
+
+
+@st.cache_data(ttl=3600, max_entries=10, show_spinner=False)
+def datos_filtrados(nombre: str, filtro, codigos: Tuple[str, ...] = ()) -> pd.DataFrame:
+    """
+    Base `nombre` ('ranking' | 'series' | 'indicadores' | 'pyg' | 'balance' | 'solvencia') restringida al filtro.
+    La clave de caché incluye el filtro completo (período, segmentos, entidades, calidad): una selección distinta
+    nunca reutiliza el resultado de otra. Añade `entidad`, `segmento_clasif` y `procedencia_clasif`.
+    """
+    if filtro is None:
+        from utils.filtros_analisis import filtro_por_defecto
+        filtro = filtro_por_defecto(cargar_dim_observaciones())
+    if nombre == "ranking":
+        base = cargar_ranking_cooperativas()
+    elif nombre == "series":
+        base = cargar_series_temporales()
+    elif nombre == "indicadores":
+        base = cargar_indicadores()[0]
+    elif nombre == "pyg":
+        base = cargar_pyg()[0]
+    elif nombre == "balance":
+        base = cargar_balance_por_codigos(tuple(codigos))
+    elif nombre == "solvencia":
+        base = cargar_solvencia()[0]
+    else:
+        raise ValueError(f"base desconocida: {nombre}")
+    if base is None or base.empty:
+        return pd.DataFrame()
+    return _presentar(filtrar(base, filtro, col_entidad="cooperativa"))
+
+
+def datos_universo(nombre: str, filtro, codigos: Tuple[str, ...] = ()) -> pd.DataFrame:
+    """
+    Población de REFERENCIA de los análisis relativos (percentiles CAMEL, IIS, alertas): período ∩ segmentos ∩ calidad,
+    SIN restringir entidades. La selección de entidades solo decide cuáles se muestran (`acotar_entidades`); así un score
+    percentil no se degenera a «100» cuando se elige una sola cooperativa.
+    """
+    return datos_filtrados(nombre, filtro.sin_entidades(), codigos)
+
+
+def acotar_entidades(df: pd.DataFrame, filtro) -> pd.DataFrame:
+    """Muestra únicamente las entidades seleccionadas (si no hay selección, toda la población)."""
+    if df is None or df.empty or not filtro.entidades:
+        return df
+    return df[df["entidad"].astype(str).isin(set(filtro.entidades))]
+
+
+# =============================================================================
+# FUNCIONES DE CONSULTA OPTIMIZADAS (todas reciben el FiltroAnalisis completo)
 # =============================================================================
 
-@st.cache_data(ttl=3600)
-def obtener_metricas_kpi(fecha, segmento: str = "Todos") -> dict:
+_CODIGOS_KPI = {
+    'total_activos': '1', 'fondos_disponibles': '11', 'total_cartera': '14', 'total_depositos': '21', 'total_patrimonio': '3',
+}
+
+
+def obtener_metricas_kpi(fecha, filtro) -> dict:
     """
-    Obtiene métricas del sistema para KPIs de forma optimizada.
-    Usa datos pre-agregados en lugar de filtrar 22M registros.
+    KPIs de la población filtrada (en millones). Se calculan sumando el ranking filtrado, que reproduce exactamente
+    el agregado del sistema (`agg_metricas_sistema`) cuando no hay restricciones.
     """
-    df = cargar_metricas_sistema()
-    if df.empty:
+    rk = datos_filtrados("ranking", filtro)
+    if rk.empty:
         return {}
-
-    # Filtrar por fecha
-    df_fecha = df[df['fecha'] == fecha]
-
-    # Filtrar por segmento
-    if segmento != "Todos":
-        df_fecha = df_fecha[df_fecha['segmento'] == segmento]
-
-    metricas = {}
-
-    # Mapeo de códigos a nombres
-    codigos = {
-        'total_activos': '1',
-        'fondos_disponibles': '11',
-        'total_cartera': '14',
-        'total_depositos': '21',
-        'total_patrimonio': '3',
-    }
-
-    for nombre, codigo in codigos.items():
-        valor = df_fecha[df_fecha['codigo'] == codigo]['valor_total'].sum()
-        metricas[nombre] = valor / 1_000_000  # Convertir a millones
-
-    # Número de cooperativas (del código 1 = activos)
-    df_activos = df_fecha[df_fecha['codigo'] == '1']
-    metricas['num_cooperativas'] = df_activos['num_cooperativas'].sum()
-
+    d = rk[rk['fecha'] == pd.Timestamp(fecha)]
+    if d.empty:
+        return {}
+    metricas = {nombre: d.loc[d['codigo'] == cod, 'valor'].sum() / 1_000_000 for nombre, cod in _CODIGOS_KPI.items()}
+    metricas['num_cooperativas'] = d.loc[d['codigo'] == '1', 'entidad'].nunique()
     return metricas
 
 
-@st.cache_data(ttl=3600)
-def obtener_ranking_rapido(fecha, codigo: str = '1', top_n: int = 20, segmento: str = "Todos") -> pd.DataFrame:
-    """
-    Obtiene ranking de cooperativas de forma optimizada.
-    """
-    df = cargar_ranking_cooperativas()
-    if df.empty:
+def obtener_ranking_rapido(fecha, codigo: str = '1', top_n: int = 20, filtro=None) -> pd.DataFrame:
+    """Ranking de la población filtrada para una cuenta y un corte (top_n=0 → todas)."""
+    rk = datos_filtrados("ranking", filtro)
+    if rk.empty:
         return pd.DataFrame()
-
-    # Filtrar
-    mask = (df['fecha'] == fecha) & (df['codigo'] == codigo)
-    if segmento != "Todos":
-        mask &= (df['segmento'] == segmento)
-
-    df_filtrado = df[mask].copy()
-
-    if df_filtrado.empty:
+    d = rk[(rk['fecha'] == pd.Timestamp(fecha)) & (rk['codigo'] == codigo)].copy()
+    if d.empty:
         return pd.DataFrame()
-
-    # Ordenar y tomar top N (0 = todas)
-    df_filtrado = df_filtrado.sort_values('valor', ascending=False)
+    d = d.sort_values('valor', ascending=False)
     if top_n > 0:
-        df_filtrado = df_filtrado.head(top_n)
-    df_filtrado['valor_millones'] = df_filtrado['valor'] / 1_000_000
+        d = d.head(top_n)
+    d['valor_millones'] = d['valor'] / 1_000_000
+    return d[['fecha', 'cooperativa', 'segmento', 'valor', 'valor_millones', 'procedencia_clasif']]
 
-    return df_filtrado[['cooperativa', 'segmento', 'valor', 'valor_millones']]
 
-
-@st.cache_data(ttl=3600)
-def obtener_datos_treemap_rapido(fecha, segmento: str = "Todos", top_n: int = 20) -> pd.DataFrame:
-    """
-    Prepara datos para treemap de forma optimizada (vectorizado).
-    """
-    df = cargar_ranking_cooperativas()
+def obtener_datos_treemap_rapido(fecha, filtro, top_n: int = 20) -> pd.DataFrame:
+    """Datos del treemap de activos de la población filtrada (vectorizado)."""
+    df = datos_filtrados("ranking", filtro)
     if df.empty:
         return pd.DataFrame()
-
-    # Filtrar por fecha y segmento
-    mask = df['fecha'] == fecha
-    if segmento != "Todos":
-        mask &= df['segmento'] == segmento
-    df_fecha = df[mask]
+    df_fecha = df[df['fecha'] == pd.Timestamp(fecha)]
 
     # NIVEL 1: Top cooperativas por activos (código '1')
     activos = df_fecha[df_fecha['codigo'] == '1'].nlargest(top_n, 'valor')
     activos = activos[activos['valor'].notna() & (activos['valor'] > 0)]
-
     if activos.empty:
         return pd.DataFrame()
 
-    # Construir nivel 1 vectorizado
     activos_coop_str = activos['cooperativa'].astype(str).values
     df_n1 = pd.DataFrame({
-        'labels': activos_coop_str,
-        'parents': '',
-        'values': activos['valor'].values / 1_000_000,
-        'tipo': 'cooperativa',
-        'id': activos_coop_str,
+        'labels': activos_coop_str, 'parents': '', 'values': activos['valor'].values / 1_000_000,
+        'tipo': 'cooperativa', 'id': activos_coop_str,
     })
 
-    # NIVEL 2: Subcuentas por cooperativa (vectorizado)
+    # NIVEL 2: Subcuentas por cooperativa
     cooperativas_top = activos['cooperativa'].tolist()
     cuentas_nivel2 = {'11': 'Fondos Disponibles', '13': 'Inversiones', '14': 'Cartera de Créditos'}
-
     df_top = df_fecha[
-        df_fecha['cooperativa'].isin(cooperativas_top) &
-        df_fecha['codigo'].isin(cuentas_nivel2.keys()) &
-        df_fecha['valor'].notna() &
-        (df_fecha['valor'] > 0)
+        df_fecha['cooperativa'].isin(cooperativas_top) & df_fecha['codigo'].isin(cuentas_nivel2.keys()) &
+        df_fecha['valor'].notna() & (df_fecha['valor'] > 0)
     ].copy()
-
     if not df_top.empty:
         df_top['nombre_cuenta'] = df_top['codigo'].map(cuentas_nivel2)
         coop_str = df_top['cooperativa'].astype(str).values
         df_n2 = pd.DataFrame({
-            'labels': df_top['nombre_cuenta'].values,
-            'parents': coop_str,
-            'values': df_top['valor'].values / 1_000_000,
-            'tipo': 'cuenta_nivel2',
-            'id': coop_str + '_' + df_top['nombre_cuenta'].values,
+            'labels': df_top['nombre_cuenta'].values, 'parents': coop_str, 'values': df_top['valor'].values / 1_000_000,
+            'tipo': 'cuenta_nivel2', 'id': coop_str + '_' + df_top['nombre_cuenta'].values,
         })
         df_tree = pd.concat([df_n1, df_n2], ignore_index=True)
     else:
         df_tree = df_n1
 
-    # Participación
     total_sistema = df_n1['values'].sum()
     df_tree['participacion'] = (df_tree['values'] / total_sistema * 100) if total_sistema > 0 else 0
-
     return df_tree
 
 
-@st.cache_data(ttl=3600)
-def obtener_datos_treemap_pasivos_rapido(fecha, segmento: str = "Todos", top_n: int = 20) -> pd.DataFrame:
-    """
-    Prepara datos para treemap de pasivos y patrimonio (vectorizado).
-    """
-    df = cargar_ranking_cooperativas()
+def obtener_datos_treemap_pasivos_rapido(fecha, filtro, top_n: int = 20) -> pd.DataFrame:
+    """Datos del treemap de pasivos y patrimonio de la población filtrada (vectorizado)."""
+    df = datos_filtrados("ranking", filtro)
     if df.empty:
         return pd.DataFrame()
+    df_fecha = df[df['fecha'] == pd.Timestamp(fecha)]
 
-    # Filtrar por fecha y segmento
-    mask = df['fecha'] == fecha
-    if segmento != "Todos":
-        mask &= df['segmento'] == segmento
-    df_fecha = df[mask]
-
-    # Top cooperativas por activos
     activos = df_fecha[df_fecha['codigo'] == '1'].nlargest(top_n, 'valor')
     cooperativas_top = activos['cooperativa'].tolist()
 
-    # NIVEL 1: Pasivo + Patrimonio por cooperativa (vectorizado)
-    df_pas_pat = df_fecha[
-        df_fecha['cooperativa'].isin(cooperativas_top) &
-        df_fecha['codigo'].isin(['2', '3'])
-    ]
+    df_pas_pat = df_fecha[df_fecha['cooperativa'].isin(cooperativas_top) & df_fecha['codigo'].isin(['2', '3'])]
     totales = df_pas_pat.groupby('cooperativa', observed=True)['valor'].sum().reset_index()
     totales = totales[totales['valor'] > 0]
-
     if totales.empty:
         return pd.DataFrame()
 
     totales_coop_str = totales['cooperativa'].astype(str).values
     df_n1 = pd.DataFrame({
-        'labels': totales_coop_str,
-        'parents': '',
-        'values': totales['valor'].values / 1_000_000,
-        'tipo': 'cooperativa',
-        'id': totales_coop_str,
+        'labels': totales_coop_str, 'parents': '', 'values': totales['valor'].values / 1_000_000,
+        'tipo': 'cooperativa', 'id': totales_coop_str,
     })
 
-    # NIVEL 2: Subcuentas por cooperativa (vectorizado)
     cuentas_nivel2 = {'21': 'Obligaciones con el Público', '26': 'Obligaciones Financieras', '3': 'Patrimonio'}
-
     df_sub = df_fecha[
-        df_fecha['cooperativa'].isin(cooperativas_top) &
-        df_fecha['codigo'].isin(cuentas_nivel2.keys()) &
-        df_fecha['valor'].notna() &
-        (df_fecha['valor'] > 0)
+        df_fecha['cooperativa'].isin(cooperativas_top) & df_fecha['codigo'].isin(cuentas_nivel2.keys()) &
+        df_fecha['valor'].notna() & (df_fecha['valor'] > 0)
     ].copy()
-
     if not df_sub.empty:
         df_sub['nombre_cuenta'] = df_sub['codigo'].map(cuentas_nivel2)
         coop_str = df_sub['cooperativa'].astype(str).values
         df_n2 = pd.DataFrame({
-            'labels': df_sub['nombre_cuenta'].values,
-            'parents': coop_str,
-            'values': df_sub['valor'].values / 1_000_000,
-            'tipo': 'cuenta_nivel2',
-            'id': coop_str + '_' + df_sub['nombre_cuenta'].values,
+            'labels': df_sub['nombre_cuenta'].values, 'parents': coop_str, 'values': df_sub['valor'].values / 1_000_000,
+            'tipo': 'cuenta_nivel2', 'id': coop_str + '_' + df_sub['nombre_cuenta'].values,
         })
         df_tree = pd.concat([df_n1, df_n2], ignore_index=True)
     else:
         df_tree = df_n1
 
-    # Participación
     total_sistema = df_n1['values'].sum()
     df_tree['participacion'] = (df_tree['values'] / total_sistema * 100) if total_sistema > 0 else 0
-
     return df_tree
 
 
-@st.cache_data(ttl=3600)
-def obtener_crecimiento_anual(fecha_actual, fecha_anterior, codigo: str, segmento: str = "Todos", top_n: int = 20) -> pd.DataFrame:
+def obtener_crecimiento_anual(fecha_actual, fecha_anterior, codigo: str, filtro=None, top_n: int = 20) -> pd.DataFrame:
     """
-    Calcula crecimiento anual por cooperativa de forma optimizada.
+    Crecimiento entre dos cortes de las entidades que cumplen el filtro EN `fecha_actual`.
+
+    Excepción documentada: el valor base (`fecha_anterior`, normalmente 12 meses antes) se toma de la MISMA entidad
+    aunque ese mes quede fuera del período elegido o la entidad tuviera otro segmento entonces; el crecimiento es
+    inherentemente una comparación entre dos fechas y solo la observación del corte debe cumplir el filtro.
     """
-    df = cargar_ranking_cooperativas()
-    if df.empty:
+    rk = datos_filtrados("ranking", filtro)
+    if rk.empty:
         return pd.DataFrame()
-
-    # Datos actuales
-    mask_actual = (df['fecha'] == fecha_actual) & (df['codigo'] == codigo)
-    if segmento != "Todos":
-        mask_actual &= (df['segmento'] == segmento)
-    df_actual = df[mask_actual][['cooperativa', 'segmento', 'valor']].copy()
-    df_actual = df_actual.rename(columns={'valor': 'valor_actual'})
-
-    # Datos anteriores
-    mask_anterior = (df['fecha'] == fecha_anterior) & (df['codigo'] == codigo)
-    df_anterior = df[mask_anterior][['cooperativa', 'valor']].copy()
-    df_anterior = df_anterior.rename(columns={'valor': 'valor_anterior'})
-
-    # Merge
-    df_crec = df_actual.merge(df_anterior, on='cooperativa', how='inner')
-
-    # Calcular crecimiento
-    df_crec['crecimiento'] = (
-        (df_crec['valor_actual'] - df_crec['valor_anterior']) /
-        df_crec['valor_anterior'] * 100
-    )
-
-    # Filtrar y ordenar (top_n=0 = todas)
+    actual = rk[(rk['fecha'] == pd.Timestamp(fecha_actual)) & (rk['codigo'] == codigo)][['cooperativa', 'segmento', 'procedencia_clasif', 'valor']]
+    actual = actual.rename(columns={'valor': 'valor_actual'})
+    crudo = cargar_ranking_cooperativas()
+    previo = crudo[(crudo['fecha'] == pd.Timestamp(fecha_anterior)) & (crudo['codigo'] == codigo)][['cooperativa', 'valor']]
+    previo = previo.rename(columns={'valor': 'valor_anterior'})
+    actual = actual.assign(cooperativa=actual['cooperativa'].astype(str))
+    previo = previo.assign(cooperativa=previo['cooperativa'].astype(str))
+    df_crec = actual.merge(previo, on='cooperativa', how='inner', validate='one_to_one')
+    df_crec['fecha_actual'] = pd.Timestamp(fecha_actual)
+    df_crec['fecha_anterior'] = pd.Timestamp(fecha_anterior)
+    df_crec['crecimiento'] = (df_crec['valor_actual'] - df_crec['valor_anterior']) / df_crec['valor_anterior'] * 100
     df_crec = df_crec[df_crec['valor_anterior'] > 0].dropna(subset=['crecimiento'])
     if top_n > 0:
         df_crec = df_crec.nlargest(top_n, 'valor_actual')
-    df_crec = df_crec.sort_values('crecimiento', ascending=True)
-
-    return df_crec
+    return df_crec.sort_values('crecimiento', ascending=True)
 
 
-@st.cache_data(ttl=3600)
-def obtener_serie_sistema(codigo: str, segmento: str = "Todos") -> pd.DataFrame:
-    """
-    Serie temporal del total del sistema para una cuenta de balance dada. Usa
-    el mismo agregado y la misma lógica de suma que `obtener_metricas_kpi`,
-    pero devuelve todas las fechas de una vez para construir mini-tendencias
-    (sparklines) en el home ejecutivo.
-
-    `segmento="Todos"` (por defecto) suma todos los segmentos y reproduce
-    exactamente el comportamiento anterior; cualquier otro valor restringe la
-    suma a ese segmento, lo que permite filtrar el dashboard principal por
-    segmento sin duplicar la lógica de agregación.
-    """
-    df = cargar_metricas_sistema()
-    if df.empty:
+def obtener_serie_sistema(codigo: str, filtro=None) -> pd.DataFrame:
+    """Serie temporal del total de la población filtrada para una cuenta (suma del ranking filtrado)."""
+    rk = datos_filtrados("ranking", filtro)
+    if rk.empty:
         return pd.DataFrame(columns=['fecha', 'valor_total'])
-
-    df_f = df[df['codigo'] == codigo]
-    if segmento != "Todos":
-        df_f = df_f[df_f['segmento'] == segmento]
-
-    serie = (
-        df_f
-        .groupby('fecha', observed=True)['valor_total']
-        .sum()
-        .reset_index()
-        .sort_values('fecha')
-    )
-    return serie
+    return (rk[rk['codigo'] == codigo].groupby('fecha', observed=True)['valor']
+            .sum().rename('valor_total').reset_index().sort_values('fecha'))
 
 
 # =============================================================================
@@ -401,26 +388,20 @@ def obtener_ultima_fecha():
     return fechas[0] if fechas else None
 
 
-@st.cache_data(ttl=3600)
 def obtener_segmentos_disponibles_rapido() -> list:
-    """Obtiene lista de segmentos únicos desde datos pre-agregados."""
-    df = cargar_metricas_sistema()
-    if df.empty:
+    """Segmentos con clasificación verificable en la dimensión de observaciones (clasificación puntual)."""
+    d = cargar_dim_observaciones()
+    return sorted(d['segmento_clasif'].dropna().unique()) if not d.empty else []
+
+
+def obtener_cooperativas_filtro(filtro) -> list:
+    """Cooperativas de la población filtrada, ordenadas por activos del último corte disponible dentro de la selección."""
+    rk = datos_filtrados("ranking", filtro)
+    if rk.empty:
         return []
-    return sorted(df['segmento'].unique())
-
-
-@st.cache_data(ttl=3600)
-def obtener_cooperativas_por_segmento(segmento: str = "Todos") -> list:
-    """Obtiene lista de cooperativas ordenadas por activos."""
-    df = cargar_catalogo_cooperativas()
-    if df.empty:
-        return []
-
-    if segmento != "Todos":
-        df = df[df['segmento'] == segmento]
-
-    return df['cooperativa'].tolist()
+    a = rk[rk['codigo'] == '1'].sort_values('fecha')
+    ult = a.groupby('cooperativa', observed=True).tail(1).sort_values('valor', ascending=False)
+    return ult['cooperativa'].astype(str).tolist()
 
 
 # =============================================================================
@@ -792,24 +773,3 @@ def obtener_fechas_disponibles(df: pd.DataFrame) -> list:
 def obtener_segmentos_disponibles(df: pd.DataFrame) -> list:
     """Obtiene lista de segmentos únicos."""
     return sorted(df['segmento'].unique())
-
-
-def filtrar_por_segmento(df: pd.DataFrame, segmento: str) -> pd.DataFrame:
-    """Filtra DataFrame por segmento."""
-    if segmento == "Todos":
-        return df.copy()
-    return df[df['segmento'] == segmento].copy()
-
-
-def obtener_top_cooperativas(
-    df: pd.DataFrame,
-    fecha,
-    codigo: str = '1',
-    top_n: int = 20,
-    segmento: Optional[str] = None
-) -> List[str]:
-    """Obtiene top N cooperativas por valor."""
-    df_filtrado = df[(df['fecha'] == fecha) & (df['codigo'] == codigo)]
-    if segmento and segmento != "Todos":
-        df_filtrado = df_filtrado[df_filtrado['segmento'] == segmento]
-    return df_filtrado.nlargest(top_n, 'valor')['cooperativa'].tolist()

@@ -44,7 +44,7 @@ CODIGOS_CARTERA_EN_RIESGO: Tuple[str, ...] = (
 )
 
 
-def crecimiento_captaciones(fecha_actual, fecha_anterior, segmento: str = "Todos", top_n: int = 0) -> pd.DataFrame:
+def crecimiento_captaciones(fecha_actual, fecha_anterior, filtro=None, top_n: int = 0) -> pd.DataFrame:
     """
     Crecimiento de depósitos del público (captaciones) entre dos fechas, por
     cooperativa: valor absoluto y porcentual.
@@ -54,7 +54,7 @@ def crecimiento_captaciones(fecha_actual, fecha_anterior, segmento: str = "Todos
     equivalente a `CAPGM`/`TCAPGM`. `top_n=0` devuelve todas las cooperativas
     (ver `obtener_crecimiento_anual`).
     """
-    df = obtener_crecimiento_anual(fecha_actual, fecha_anterior, codigo=CODIGO_DEPOSITOS, segmento=segmento, top_n=top_n)
+    df = obtener_crecimiento_anual(fecha_actual, fecha_anterior, codigo=CODIGO_DEPOSITOS, filtro=filtro, top_n=top_n)
     if df.empty:
         return df
     return df.rename(columns={
@@ -63,7 +63,7 @@ def crecimiento_captaciones(fecha_actual, fecha_anterior, segmento: str = "Todos
     }).assign(crecimiento_absoluto=lambda d: d['depositos_actual'] - d['depositos_anterior'])
 
 
-def crecimiento_colocaciones(fecha_actual, fecha_anterior, segmento: str = "Todos", top_n: int = 0) -> pd.DataFrame:
+def crecimiento_colocaciones(fecha_actual, fecha_anterior, filtro=None, top_n: int = 0) -> pd.DataFrame:
     """
     Crecimiento de cartera bruta (colocaciones) entre dos fechas, por
     cooperativa: valor absoluto y porcentual.
@@ -72,7 +72,7 @@ def crecimiento_colocaciones(fecha_actual, fecha_anterior, segmento: str = "Todo
     `COLGA`/`TCOLGA` (horizonte anual) o `COLGM`/`TCOLGM` (horizonte mensual)
     del R, según la `fecha_anterior` que se pase.
     """
-    df = obtener_crecimiento_anual(fecha_actual, fecha_anterior, codigo=CODIGO_CARTERA_BRUTA, segmento=segmento, top_n=top_n)
+    df = obtener_crecimiento_anual(fecha_actual, fecha_anterior, codigo=CODIGO_CARTERA_BRUTA, filtro=filtro, top_n=top_n)
     if df.empty:
         return df
     return df.rename(columns={
@@ -81,7 +81,7 @@ def crecimiento_colocaciones(fecha_actual, fecha_anterior, segmento: str = "Todo
     }).assign(crecimiento_absoluto=lambda d: d['cartera_actual'] - d['cartera_anterior'])
 
 
-def crecimiento_activos(fecha_actual, fecha_anterior, segmento: str = "Todos", top_n: int = 0) -> pd.DataFrame:
+def crecimiento_activos(fecha_actual, fecha_anterior, filtro=None, top_n: int = 0) -> pd.DataFrame:
     """
     Crecimiento de activos totales entre dos fechas, por cooperativa: valor
     absoluto y porcentual. Mismo uso que `crecimiento_captaciones` — no
@@ -89,7 +89,7 @@ def crecimiento_activos(fecha_actual, fecha_anterior, segmento: str = "Todos", t
     pero es el mismo patrón aplicado a la cuenta de activos (código `1`);
     se usa como insumo del Índice de Fortaleza.
     """
-    df = obtener_crecimiento_anual(fecha_actual, fecha_anterior, codigo=CODIGO_ACTIVOS, segmento=segmento, top_n=top_n)
+    df = obtener_crecimiento_anual(fecha_actual, fecha_anterior, codigo=CODIGO_ACTIVOS, filtro=filtro, top_n=top_n)
     if df.empty:
         return df
     return df.rename(columns={

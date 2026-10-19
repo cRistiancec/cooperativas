@@ -17,9 +17,12 @@ import streamlit as st
 from analytics.financial_engine import calcular_score_camel
 from models.anomalias import detectar_anomalias, explicar_anomalia
 from models.clustering import COLUMNAS_CLUSTER, resumen_clusters, segmentar_riesgo
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES
-from utils.data_loader import cargar_indicadores, cargar_metadata
+from utils.data_loader import acotar_entidades, cargar_metadata, datos_filtrados, datos_universo
 
 st.set_page_config(
     page_title="Machine Learning | Radar Cooperativo Ecuador",
@@ -44,17 +47,17 @@ def main():
         "(ver 'Explicación' en cada resultado), nunca se asume automáticamente."
     )
 
-    df_ind, calidad = cargar_indicadores()
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ind = datos_filtrados("indicadores", filtro)
+    render_resumen_filtro(filtro, df_ind[df_ind["fecha"] == fecha_sel] if not df_ind.empty else df_ind,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ind)
 
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
-
-    fechas = sorted(df_ind["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_ml",
-    )
+    # Los modelos no supervisados son RELATIVOS: se ajustan sobre el universo (período, segmentos y calidad); la selección de
+    # entidades solo decide cuáles se muestran (un Isolation Forest/KMeans sobre 1–2 entidades carecería de sentido).
+    df_univ = datos_universo("indicadores", filtro)
+    _meta = df_univ[df_univ["fecha"] == fecha_sel][["cooperativa", "entidad", "procedencia_clasif"]].drop_duplicates("cooperativa")
 
     tab1, tab2 = st.tabs(["🔍 Detección de Anomalías (Isolation Forest)", "🧬 Segmentación de Riesgo (KMeans)"])
 
@@ -68,15 +71,25 @@ def main():
         )
         contaminacion = st.slider("Proporción esperada de instituciones atípicas", 0.05, 0.25, 0.10, 0.01, key="contam_ml")
 
-        anomalias = detectar_anomalias(df_ind, fecha_sel, segmento_sel, contaminacion)
+        anomalias = detectar_anomalias(df_univ, fecha_sel, contaminacion=contaminacion)
+        if not anomalias.empty:
+            anomalias = acotar_entidades(anomalias.merge(_meta, on="cooperativa", how="left"), filtro)
         if anomalias.empty:
-            st.warning("Sin datos suficientes para esta selección (se requieren al menos 15 instituciones con datos completos).")
+            st.warning("Sin datos suficientes para esta selección (se requieren al menos 15 instituciones con datos completos en el "
+                       "universo y que alguna cumpla la selección de entidades).")
         else:
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Instituciones evaluadas", len(anomalias))
             with col2:
                 st.metric("Instituciones marcadas como atípicas", int(anomalias["es_anomalia"].sum()))
+
+            with st.expander("Datos de la detección (descarga)"):
+                _a = anomalias.assign(fecha=pd.Timestamp(fecha_sel))
+                _a = _a[["fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif"] + [c for c in _a.columns if c not in
+                        ("fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif")]]
+                st.dataframe(_a, width="stretch", hide_index=True)
+                botones_descarga(_a, filtro, f"anomalias_{pd.Timestamp(fecha_sel):%Y%m}", "Detección de anomalías", "dl_anom", corte=fecha_sel)
 
             st.markdown("**Instituciones más atípicas**")
             top_anomalias = anomalias[anomalias["es_anomalia"]].head(15)
@@ -116,8 +129,10 @@ def main():
         )
         n_clusters = st.slider("Número de segmentos", 3, 6, 4, key="n_clusters_ml")
 
-        score = calcular_score_camel(df_ind, fecha_sel, segmento_sel)
+        score = calcular_score_camel(df_univ, fecha_sel)
         segmentado = segmentar_riesgo(score, n_clusters=n_clusters)
+        if not segmentado.empty:
+            segmentado = acotar_entidades(segmentado.merge(_meta, on="cooperativa", how="left"), filtro)
 
         if segmentado.empty:
             st.warning("Sin datos suficientes para esta selección.")
@@ -143,6 +158,9 @@ def main():
                     ["cooperativa", "segmento", "score_total"] + COLUMNAS_CLUSTER
                 ].sort_values("score_total", ascending=False)
                 st.dataframe(df_ver.round(1), width="stretch", height=350)
+            _cl = segmentado.assign(fecha=pd.Timestamp(fecha_sel))
+            _cl = _cl[["fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif", "etiqueta_cluster", "score_total"] + COLUMNAS_CLUSTER]
+            botones_descarga(_cl, filtro, f"clusters_riesgo_{pd.Timestamp(fecha_sel):%Y%m}", "Segmentación de riesgo (KMeans)", "dl_cluster", corte=fecha_sel)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 
 RAIZ = Path(__file__).resolve().parents[2]; PUERTO = 8611; BASE = f"http://localhost:{PUERTO}"
 sys.path.insert(0, str(RAIZ))
-from utils.panel_vulnerabilidad import INDICADORES, descriptivos, VISTAS   # noqa: E402
+from utils.panel_vulnerabilidad import INDICADORES, descriptivos   # noqa: E402
 
 def esperar_servidor():
     for _ in range(60):
@@ -20,9 +20,14 @@ def esperar_servidor():
 def descargar(page, url, indice, esperar_texto):
     page.goto(url); page.wait_for_selector(f"text={esperar_texto}", timeout=120000)
     page.wait_for_selector('[data-testid="stDownloadButton"] button', timeout=60000)
+    for r in page.locator('[data-testid="stExpander"] summary').all():   # los botones de descarga viven dentro de expanders
+        try: r.click(timeout=2000)
+        except Exception: pass
+    botones = page.locator('[data-testid="stDownloadButton"] button', has_text="CSV")
     with page.expect_download(timeout=60000) as dl:
-        page.locator('[data-testid="stDownloadButton"] button').nth(indice).click()
-    return pd.read_csv(dl.value.path(), encoding="utf-8-sig"), dl.value.suggested_filename
+        botones.nth(indice).click()
+    # las exportaciones llevan metadatos de filtros como comentarios «# clave: valor»
+    return pd.read_csv(dl.value.path(), encoding="utf-8-sig", comment="#"), dl.value.suggested_filename
 
 def main():
     srv = subprocess.Popen([sys.executable, "-m", "streamlit", "run", "Inicio.py", "--server.port", str(PUERTO), "--server.headless", "true"],
@@ -35,12 +40,12 @@ def main():
             # 1) Comparativo: descriptivos de la fecha más reciente, vista principal, indicador por defecto (el 1.º)
             got, nombre = descargar(pg, BASE + "/Comparativo_Segmentos", 0, "Estadísticos descriptivos")
             ind = list(INDICADORES)[0]; corte = P.fecha.max()
-            x = P[P.segmento_procedencia.isin(VISTAS[list(VISTAS)[0]]) & (P.fecha == corte)].dropna(subset=[ind])
+            x = P[P.segmento_procedencia.isin(["exacto_mes", "arrastrado"]) & (P.fecha == corte)].dropna(subset=[ind])
             exp = descriptivos(x, ind).rename(columns={"segmento_repo": "segmento"})
             ok = list(got.columns) == list(exp.columns) and len(got) == len(exp) and (got.round(3).values == exp.round(3).values).all()
             resultados.append(("Comparativo: descriptivos", nombre, len(got), ok))
             # 2) Resumen ejecutivo: medianas por segmento al corte
-            got2, n2 = descargar(pg, BASE + "/Resumen_Validado", 0, "Resumen ejecutivo validado")
+            got2, n2 = descargar(pg, BASE + "/Resumen_Validado", 1, "Resumen ejecutivo validado")
             cols = ["liquidez", "morosidad", "cobertura", "roa", "eficiencia", "solvencia_proxy"]
             exp2 = P[P.fecha == corte].groupby("segmento_repo")[cols].median().round(2)
             ok2 = len(got2) == 3 and all(abs(got2.set_index(got2.columns[0]).iloc[i, j] - exp2.iloc[i, j]) < 0.011 for i in range(3) for j in range(len(cols)))

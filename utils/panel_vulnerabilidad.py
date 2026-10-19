@@ -43,6 +43,23 @@ def cargar_panel() -> pd.DataFrame:
 def cargar_validacion() -> dict:
     return json.loads(RUTA_VALIDACION.read_text(encoding="utf-8")) if RUTA_VALIDACION.exists() else {}
 
+@st.cache_data(ttl=3600, max_entries=10, show_spinner=False)
+def panel_filtrado(filtro) -> pd.DataFrame:
+    """
+    Panel S1-S3 restringido por el filtro GLOBAL (período ∩ segmentos ∩ entidades ∩ calidad), con la misma lógica y la
+    misma dimensión de observaciones que el resto de la plataforma. Clave de caché = filtro completo.
+    Añade `entidad` y `procedencia_clasif`; `segmento_repo` coincide con la clasificación puntual (verificado en pruebas).
+    """
+    from utils.data_loader import filtrar
+    d = cargar_panel()
+    return d if d.empty else filtrar(d, filtro, col_entidad="cooperativa_fuente")
+
+
+def panel_universo(filtro) -> pd.DataFrame:
+    """Población de referencia de los z-scores entre pares: período ∩ segmentos ∩ calidad, SIN restringir entidades."""
+    return panel_filtrado(filtro.sin_entidades())
+
+
 def fechas_panel(d: pd.DataFrame) -> list:
     return sorted(d["fecha"].dropna().unique(), reverse=True)
 
@@ -65,18 +82,6 @@ def z_orientado(d: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 def csv_bytes(df: pd.DataFrame) -> bytes:
     """Contenido EXACTO de la descarga: la misma tabla que se muestra (UTF-8 con BOM para Excel)."""
     return df.to_csv(index=False).encode("utf-8-sig")
-
-def boton_csv(df: pd.DataFrame, nombre: str, key: str):
-    st.download_button("⬇️ Descargar tabla mostrada (CSV)", csv_bytes(df), file_name=nombre, mime="text/csv", key=key)
-
-VISTAS = {
-    "Principal (exacta + arrastrada, procedencia conocida)": ["exacto_mes", "arrastrado"],
-    "Solo clasificación exacta del mes": ["exacto_mes"],
-    "Solo clasificación arrastrada de otro corte": ["arrastrado"],
-}
-
-def filtrar_vista(d: pd.DataFrame, vista: str) -> pd.DataFrame:
-    return d[d.segmento_procedencia.isin(VISTAS[vista])]
 
 def composicion(d: pd.DataFrame) -> pd.Series:
     """% de observaciones por procedencia del segmento (para mostrar siempre junto a una comparación)."""

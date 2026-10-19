@@ -25,9 +25,12 @@ from analytics.financial_engine import (
     calcular_indice_importancia_sistemica, calcular_serie_ipsf, correlacion_componentes,
     diagnostico_esquemas, evaluar_estado_sistemico,
 )
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES, crear_ranking_barras
-from utils.data_loader import cargar_indicadores, cargar_metadata, cargar_ranking_cooperativas
+from utils.data_loader import acotar_entidades, cargar_metadata, datos_filtrados, datos_universo
 
 st.set_page_config(
     page_title="Riesgo Sistémico | Radar Cooperativo Ecuador",
@@ -53,27 +56,29 @@ def main():
         "de la SEPS usadas por esta plataforma, por lo que **no** se incluye un mapa de red real."
     )
 
-    df_ranking = cargar_ranking_cooperativas()
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ranking = datos_filtrados("ranking", filtro)
+    render_resumen_filtro(filtro, df_ranking[df_ranking["fecha"] == fecha_sel] if not df_ranking.empty else df_ranking,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ranking)
 
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
-
-    fechas = sorted(df_ranking["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_sist",
-    )
-
-    iis = calcular_indice_importancia_sistemica(df_ranking, fecha_sel, segmento_sel)
+    # El IIS (participación de mercado) se calcula sobre el UNIVERSO (período, segmentos y calidad seleccionados); la
+    # selección de entidades solo decide cuáles se muestran, para que la participación no se infle al elegir pocas.
+    iis_univ = calcular_indice_importancia_sistemica(datos_universo("ranking", filtro), fecha_sel)
+    iis = acotar_entidades(iis_univ.merge(
+        df_ranking[df_ranking["fecha"] == fecha_sel][["cooperativa", "entidad"]].drop_duplicates("cooperativa"),
+        on="cooperativa", how="left"), filtro) if not iis_univ.empty else iis_univ
+    if filtro.entidades and not iis.empty:
+        iis = iis.sort_values("iis_normalizado", ascending=False).reset_index(drop=True)
 
     if iis.empty:
         st.warning("Sin datos suficientes para esta selección.")
         return
 
-    top5_iis = iis.nlargest(5, "iis_normalizado")["iis_normalizado"].sum()
-    top10_iis = iis.nlargest(10, "iis_normalizado")["iis_normalizado"].sum()
-    total_iis = iis["iis_normalizado"].sum()
+    top5_iis = iis_univ.nlargest(5, "iis_normalizado")["iis_normalizado"].sum()
+    top10_iis = iis_univ.nlargest(10, "iis_normalizado")["iis_normalizado"].sum()
+    total_iis = iis_univ["iis_normalizado"].sum()
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -81,9 +86,9 @@ def main():
     with col2:
         st.metric("Institución más importante", iis.iloc[0]["cooperativa"][:28])
     with col3:
-        st.metric("Concentración del IIS en Top 5", f"{(top5_iis / total_iis * 100):.1f}%" if total_iis > 0 else "—")
+        st.metric("Concentración del IIS en Top 5 (universo)", f"{(top5_iis / total_iis * 100):.1f}%" if total_iis > 0 else "—")
     with col4:
-        st.metric("Concentración del IIS en Top 10", f"{(top10_iis / total_iis * 100):.1f}%" if total_iis > 0 else "—")
+        st.metric("Concentración del IIS en Top 10 (universo)", f"{(top10_iis / total_iis * 100):.1f}%" if total_iis > 0 else "—")
 
     st.markdown("---")
 
@@ -96,6 +101,13 @@ def main():
         df_r = iis.nlargest(20, "iis_normalizado")
         fig = crear_ranking_barras(df_r, x_col="iis_normalizado", y_col="cooperativa", formato_valor="{:.1f}")
         st.plotly_chart(fig, width="stretch")
+        st.caption("El IIS se normaliza dentro de la población filtrada: su valor depende de qué entidades y segmentos estén seleccionados.")
+        with st.expander("Datos del ranking IIS (descarga)"):
+            _t = df_r.merge(df_ranking[df_ranking["fecha"] == fecha_sel][["cooperativa", "procedencia_clasif"]].drop_duplicates("cooperativa"),
+                            on="cooperativa", how="left")
+            _t.insert(0, "fecha", pd.Timestamp(fecha_sel))
+            st.dataframe(_t, width="stretch", hide_index=True)
+            botones_descarga(_t, filtro, f"sistemico_iis_{pd.Timestamp(fecha_sel):%Y%m}", "Ranking IIS", "dl_sist_iis", corte=fecha_sel)
 
     with tab2:
         df_bubble = iis.head(40).copy()
@@ -124,7 +136,7 @@ def main():
             "sin validación completa por backtesting histórico. No es un indicador oficial. "
             "Nunca usa 'CRISIS'; el estado más severo posible es 'EVENTO EXTREMO'."
         )
-        df_ind, _ = cargar_indicadores()
+        df_ind = datos_filtrados("indicadores", filtro)
         fechas_ind = sorted(df_ind["fecha"].unique())
         idx_actual = fechas_ind.index(fecha_sel) if fecha_sel in fechas_ind else None
         fecha_anterior_yoy = None
@@ -133,9 +145,9 @@ def main():
                 fecha_anterior_yoy = f
 
         if fecha_anterior_yoy is None:
-            st.info("No hay suficiente historia (≥12 meses) para comparar interanualmente en esta fecha.")
+            st.info("No hay suficiente historia (≥12 meses) dentro del período filtrado para comparar interanualmente en esta fecha. Amplíe el período.")
         else:
-            resultado = evaluar_estado_sistemico(df_ind, df_ranking, fecha_sel, fecha_anterior_yoy, segmento_sel)
+            resultado = evaluar_estado_sistemico(df_ind, df_ranking, fecha_sel, fecha_anterior_yoy)
 
             _colores_estado = {
                 "NORMAL": "sps-light--ok", "DESACELERACIÓN": "sps-light--warn",
@@ -195,10 +207,10 @@ def main():
             "para uso operativo y no debe interpretarse como capacidad predictiva sin backtesting "
             "(ver Alertas Tempranas → Persistencia para la evidencia disponible)."
         )
-        df_ind, _ = cargar_indicadores()
+        df_ind = datos_filtrados("indicadores", filtro)
         fechas_ipsf = sorted(df_ind["fecha"].unique())[-24:]
         with st.spinner("Calculando serie IPSF..."):
-            df_serie = calcular_serie_ipsf(df_ind, df_ranking, fechas_ipsf, segmento_sel)
+            df_serie = calcular_serie_ipsf(df_ind, df_ranking, fechas_ipsf)
 
         if df_serie.empty:
             st.info("Sin datos suficientes para construir la serie IPSF en esta selección.")
@@ -210,6 +222,9 @@ def main():
             fig.update_xaxes(gridcolor=COLORES["grid"])
             fig.update_yaxes(gridcolor=COLORES["grid"])
             st.plotly_chart(fig, width="stretch")
+            with st.expander("Datos de la serie IPSF (descarga)"):
+                st.dataframe(df_serie, width="stretch", hide_index=True)
+                botones_descarga(df_serie, filtro, "sistemico_ipsf_serie", "Serie IPSF", "dl_sist_ipsf", corte=fecha_sel)
 
             diag = diagnostico_esquemas(df_serie)
             if diag.get("valido"):

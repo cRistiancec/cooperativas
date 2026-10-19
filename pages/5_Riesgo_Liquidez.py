@@ -15,13 +15,15 @@ import plotly.express as px
 import streamlit as st
 
 from analytics.financial_engine import calcular_liquidez_ampliada, calcular_cobertura_retiro
-from ui import aplicar_tema, render_filtro_segmento, render_sidebar
+from ui import (
+    aplicar_tema, botones_descarga, exigir_datos, render_filtros_globales, render_resumen_filtro, render_sidebar,
+    selector_fecha_corte,
+)
 from utils.charts import COLORES, crear_ranking_barras
 from utils.data_loader import (
-    cargar_indicadores,
     cargar_metadata,
-    cargar_ranking_cooperativas,
-    obtener_cooperativas_por_segmento,
+    datos_filtrados,
+    obtener_cooperativas_filtro,
 )
 
 st.set_page_config(
@@ -33,12 +35,10 @@ aplicar_tema()
 
 
 @st.cache_data(ttl=3600)
-def _serie_liq_sistema(df_indicadores: pd.DataFrame, segmento: str = "Todos") -> pd.DataFrame:
-    """Serie temporal del promedio simple de LIQ (oficial) para el sistema."""
+def _serie_liq_sistema(df_indicadores: pd.DataFrame) -> pd.DataFrame:
+    """Serie temporal del promedio simple de LIQ (oficial) de la población filtrada (df ya filtrado)."""
     df_f = df_indicadores[df_indicadores["codigo"] == "LIQ"]
-    if segmento != "Todos":
-        df_f = df_f[df_f["segmento"] == segmento]
-    serie = df_f.groupby("fecha", observed=True)["valor"].mean().reset_index()
+    serie = df_f.groupby("fecha", observed=True).agg(valor=("valor", "mean"), entidades=("entidad", "nunique")).reset_index()
     serie["valor_pct"] = serie["valor"] * 100
     return serie.sort_values("fecha")
 
@@ -53,25 +53,18 @@ def main():
         "complementado con una **liquidez ampliada calculada** (Fondos Disponibles + Inversiones) / Depósitos."
     )
 
-    df_ind, calidad = cargar_indicadores()
-    df_ranking = cargar_ranking_cooperativas()
-
-    st.sidebar.markdown("### Filtros")
-    # Filtro Global de Segmento (ui/filtros.py) — compartido con toda la plataforma
-    segmento_sel = render_filtro_segmento()
-
-    fechas = sorted(df_ind["fecha"].unique(), reverse=True)
-    fecha_sel = st.sidebar.selectbox(
-        "Fecha de análisis", fechas, format_func=lambda x: pd.Timestamp(x).strftime("%B %Y").title(),
-        index=0, key="fecha_liq",
-    )
+    filtro = render_filtros_globales()
+    fecha_sel = selector_fecha_corte(filtro)
+    df_ind = datos_filtrados("indicadores", filtro)
+    df_ranking = datos_filtrados("ranking", filtro)
+    render_resumen_filtro(filtro, df_ind[df_ind["fecha"] == fecha_sel] if not df_ind.empty else df_ind,
+                          corte=pd.Timestamp(metadata["fecha_max"]), fecha_analisis=fecha_sel)
+    exigir_datos(df_ind)
 
     # ---------------------------------------------------------------- KPIs
     df_liq_fecha = df_ind[(df_ind["codigo"] == "LIQ") & (df_ind["fecha"] == fecha_sel)]
-    if segmento_sel != "Todos":
-        df_liq_fecha = df_liq_fecha[df_liq_fecha["segmento"] == segmento_sel]
 
-    liq_ampliada = calcular_liquidez_ampliada(df_ranking, fecha_sel, segmento_sel)
+    liq_ampliada = calcular_liquidez_ampliada(df_ranking, fecha_sel)
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -101,6 +94,10 @@ def main():
                 df_r = df_r.nlargest(20, "valor_pct")
                 fig = crear_ranking_barras(df_r, x_col="valor_pct", y_col="cooperativa", formato_valor="{:.1f}%")
                 st.plotly_chart(fig, width="stretch")
+                with st.expander("Datos del ranking LIQ (descarga)"):
+                    _t = df_r[["fecha", "cooperativa", "entidad", "segmento", "procedencia_clasif", "codigo", "valor", "valor_pct"]]
+                    st.dataframe(_t, width="stretch", hide_index=True)
+                    botones_descarga(_t, filtro, f"liquidez_ranking_liq_{pd.Timestamp(fecha_sel):%Y%m}", "Ranking LIQ", "dl_liq_rank", corte=fecha_sel)
             else:
                 st.info("Sin datos para esta selección.")
 
@@ -115,7 +112,7 @@ def main():
 
     # ------------------------------------------------------------ TAB 2
     with tab2:
-        serie = _serie_liq_sistema(df_ind, segmento_sel)
+        serie = _serie_liq_sistema(df_ind)
         if not serie.empty:
             fig = px.line(serie, x="fecha", y="valor_pct", markers=True,
                           labels={"fecha": "Fecha", "valor_pct": "LIQ promedio (%)"})
@@ -125,6 +122,10 @@ def main():
             fig.update_xaxes(gridcolor=COLORES["grid"])
             fig.update_yaxes(gridcolor=COLORES["grid"])
             st.plotly_chart(fig, width="stretch")
+            st.caption("Promedio simple de LIQ de las entidades de la selección en cada mes (la composición puede variar entre meses).")
+            with st.expander("Datos de la serie (descarga)"):
+                st.dataframe(serie, width="stretch", hide_index=True)
+                botones_descarga(serie, filtro, "liquidez_serie_liq", "Serie LIQ promedio", "dl_liq_serie", corte=fecha_sel)
         else:
             st.info("Sin datos suficientes.")
 
@@ -155,7 +156,8 @@ def main():
             "salida diaria estimada de depósitos, usando sus Fondos Disponibles reportados. "
             "No es un modelo de estrés regulatorio; es una aproximación simple para priorizar revisión."
         )
-        cooperativas = obtener_cooperativas_por_segmento(segmento_sel)
+        _con_balance = set(liq_ampliada["cooperativa"].astype(str)) if not liq_ampliada.empty else set()
+        cooperativas = [c for c in obtener_cooperativas_filtro(filtro) if c in _con_balance]
         if cooperativas:
             coop_sel = st.selectbox("Cooperativa", cooperativas, key="coop_stress_liq")
             fila = liq_ampliada[liq_ampliada["cooperativa"] == coop_sel]
@@ -171,7 +173,7 @@ def main():
             else:
                 st.info("Sin datos de balance para esta cooperativa en la fecha seleccionada.")
         else:
-            st.info("Sin cooperativas disponibles para este segmento.")
+            st.info("Sin cooperativas con datos de balance para la selección.")
 
     st.markdown("---")
     st.caption(

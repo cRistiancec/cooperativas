@@ -18,3 +18,6 @@
 
 ## Sesión 7 (peso de datos)
 - `scripts/optimizar_parquet.py`: reordenamiento físico + zstd, lossless y verificado; `master_data/` 123,7 → 60,6 MB. Escritores migrados de snappy a zstd; paso en el workflow; control de 95 MB en `validar_cierre.py`; `tests/test_optimizar_parquet.py` (167 pruebas OK).
+
+## Sesión 8 (filtros globales)
+- Filtro global combinable (período ∩ segmentos ∩ entidades ∩ calidad de clasificación) con segmento puntual en las 20 páginas; `utils/filtros_analisis.py`, `ui/filtros.py`, `master_data/dim_observaciones.parquet` (+ paso en el workflow, validación estricta y optimizador). Exportaciones CSV/Excel con metadatos de filtros. Ver `docs/FILTROS_GLOBALES.md`. 206 pruebas OK; E2E con Chromium OK; producción NO verificada.
